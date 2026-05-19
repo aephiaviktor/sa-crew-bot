@@ -8,6 +8,9 @@ contextBridge.exposeInMainWorld('botApi', {
   getBotStatus: () => ipcRenderer.invoke('bot:get-status'),
   applySettingsNow: () => ipcRenderer.invoke('bot:apply-settings-now'),
   cancelBid: () => ipcRenderer.invoke('bot:cancel-bid'),
+  getAppVersion: () => ipcRenderer.invoke('app:get-version'),
+  checkUpdate: () => ipcRenderer.invoke('app:check-update'),
+  applyUpdate: () => ipcRenderer.invoke('app:apply-update'),
   onLog: (handler) => {
     const wrapped = (_event, payload) => handler(payload);
     ipcRenderer.on('bot-log', wrapped);

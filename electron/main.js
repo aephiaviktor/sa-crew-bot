@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, Menu, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 const packageJson = require('../package.json');
 
 app.disableHardwareAcceleration();
@@ -31,6 +33,63 @@ let botRunning = false;
 
 const AEPHIA_TOKEN_VALIDATE_URL = 'https://api.aephia.com/token/validate';
 const APP_DISPLAY_NAME = 'SA Crew Bot';
+const APP_ROOT = path.join(__dirname, '..');
+const execFileAsync = promisify(execFile);
+
+function shortCommit(value) {
+  return String(value || '').trim().slice(0, 7) || 'unknown';
+}
+
+async function runProjectCommand(command, args, options = {}) {
+  const result = await execFileAsync(command, args, {
+    cwd: APP_ROOT,
+    timeout: options.timeout || 120000,
+    maxBuffer: options.maxBuffer || 1024 * 1024
+  });
+  return {
+    stdout: String(result.stdout || '').trim(),
+    stderr: String(result.stderr || '').trim()
+  };
+}
+
+async function gitOutput(args, options) {
+  const result = await runProjectCommand('git', args, options);
+  return result.stdout;
+}
+
+async function readRemotePackageJson() {
+  try {
+    const raw = await gitOutput(['show', 'origin/main:package.json']);
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function getUpdateState(fetchRemote) {
+  if (fetchRemote) {
+    await gitOutput(['fetch', '--prune', 'origin', 'main'], { timeout: 120000 });
+  }
+
+  const [currentCommit, remoteCommit, statusOutput] = await Promise.all([
+    gitOutput(['rev-parse', 'HEAD']),
+    gitOutput(['rev-parse', 'origin/main']),
+    gitOutput(['status', '--porcelain'])
+  ]);
+  const remotePackage = await readRemotePackageJson();
+  const remoteVersion = remotePackage?.version || null;
+
+  return {
+    currentVersion: packageJson.version || 'unknown',
+    remoteVersion,
+    currentCommit,
+    remoteCommit,
+    currentShortCommit: shortCommit(currentCommit),
+    remoteShortCommit: shortCommit(remoteCommit),
+    updateAvailable: currentCommit !== remoteCommit,
+    hasLocalChanges: statusOutput.length > 0
+  };
+}
 
 function installApplicationMenu() {
   const appVersion = packageJson.version || 'unknown';
@@ -351,6 +410,76 @@ ipcMain.handle('bot:cancel-bid', async () => {
     };
   } catch (err) {
     logger.error('Cancel bid failed:', err);
+    return {
+      ok: false,
+      status: 'error',
+      message: err?.message || String(err)
+    };
+  }
+});
+
+ipcMain.handle('app:get-version', async () => {
+  return {
+    version: packageJson.version || 'unknown'
+  };
+});
+
+ipcMain.handle('app:check-update', async () => {
+  try {
+    const state = await getUpdateState(true);
+    return {
+      ok: true,
+      ...state
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      message: err?.message || String(err)
+    };
+  }
+});
+
+ipcMain.handle('app:apply-update', async () => {
+  if (botRunning) {
+    return {
+      ok: false,
+      status: 'bot_running',
+      message: 'Stop the bot before applying an app update.'
+    };
+  }
+
+  try {
+    const before = await getUpdateState(true);
+    if (!before.updateAvailable) {
+      return {
+        ok: true,
+        status: 'up_to_date',
+        ...before
+      };
+    }
+
+    if (before.hasLocalChanges) {
+      return {
+        ok: false,
+        status: 'local_changes',
+        message: 'Local source changes are present. Commit or stash them before updating.',
+        ...before
+      };
+    }
+
+    await gitOutput(['pull', '--ff-only', 'origin', 'main'], { timeout: 120000 });
+    await runProjectCommand('npm', ['install'], { timeout: 240000, maxBuffer: 4 * 1024 * 1024 });
+    await runProjectCommand('npm', ['run', 'build'], { timeout: 240000, maxBuffer: 4 * 1024 * 1024 });
+
+    const after = await getUpdateState(false);
+    return {
+      ok: true,
+      status: 'updated',
+      previousCommit: before.currentCommit,
+      previousShortCommit: before.currentShortCommit,
+      ...after
+    };
+  } catch (err) {
     return {
       ok: false,
       status: 'error',

@@ -516,6 +516,21 @@ h3 {
   margin-top: 14px;
 }
 
+.setup-update-panel {
+  margin-top: 14px;
+}
+
+.update-copy {
+  margin: 3px 0 0 0;
+  color: #9fc8ea;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.update-actions {
+  margin-top: 0;
+}
+
 .config-grid {
   display: grid;
   grid-template-columns: 1fr;
