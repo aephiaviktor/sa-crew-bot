@@ -36,6 +36,7 @@
                           <th>Side</th>
                           <th>Quantity</th>
                           <th>Price (SOL)</th>
+                          <th></th>
                         </tr>
                       </thead>
                       <tbody>
@@ -47,13 +48,33 @@
                             </select>
                           </td>
                           <td>
-                            <input name="QUANTITY" type="number" />
+                            <div class="cell-stack">
+                              <input name="QUANTITY" type="number" />
+                              <span class="cell-hint" id="quantity-hint">Max buy quantity</span>
+                            </div>
                           </td>
                           <td>
-                            <input name="MAX_BID_SOL" type="text" />
+                            <div class="cell-stack">
+                              <input name="MAX_BID_SOL" type="text" />
+                              <span class="cell-hint" id="price-hint">Max price</span>
+                            </div>
+                          </td>
+                          <td class="remove-cell">
+                            <div class="cell-stack">
+                              <button id="main-cancel-order-btn" class="cancel-order-btn" type="button">Cancel Order</button>
+                              <button id="main-remove-row-btn" class="remove-row-btn" type="button">Remove</button>
+                            </div>
                           </td>
                         </tr>
                       </tbody>
+                      <tfoot>
+                        <tr>
+                          <td colspan="3"></td>
+                          <td class="remove-cell add-row-cell">
+                            <button id="add-limit-order-row-btn" type="button">+ Add Row</button>
+                          </td>
+                        </tr>
+                      </tfoot>
                     </table>
                   </div>
                 </form>
@@ -256,7 +277,7 @@
         <h2 id="update-dialog-title">SA Crew Bot Update</h2>
         <div class="update-version-grid">
           <span>Current version</span>
-          <strong id="update-current-version">v0.1.13</strong>
+          <strong id="update-current-version">v0.1.14</strong>
           <span>Latest GitHub version</span>
           <strong id="update-latest-version">Checking...</strong>
         </div>

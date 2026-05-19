@@ -51,6 +51,11 @@ const marginNrEl = document.getElementById('margin-nr');
 const lastActionEl = document.getElementById('last-action');
 const lastCheckAtEl = document.getElementById('last-check-at');
 const cancelBidBtn = document.getElementById('cancel-bid-btn');
+const mainCancelOrderBtn = document.getElementById('main-cancel-order-btn');
+const mainRemoveRowBtn = document.getElementById('main-remove-row-btn');
+const addLimitOrderRowBtn = document.getElementById('add-limit-order-row-btn');
+const quantityHintEl = document.getElementById('quantity-hint');
+const priceHintEl = document.getElementById('price-hint');
 const updateBtn = document.getElementById('update-btn');
 const updateModal = document.getElementById('update-modal');
 const updateCurrentVersionEl = document.getElementById('update-current-version');
@@ -88,6 +93,16 @@ function setRunning(running) {
   }
 }
 
+function updateLimitOrderHints() {
+  const side = String((mainForm.elements.namedItem('SIDE') || {}).value || 'buy');
+  if (quantityHintEl) {
+    quantityHintEl.textContent = side === 'sell' ? 'Min sell quantity' : 'Max buy quantity';
+  }
+  if (priceHintEl) {
+    priceHintEl.textContent = side === 'sell' ? 'Min price' : 'Max price';
+  }
+}
+
 function setSensitiveVisible(visible) {
   sensitiveVisible = visible;
   form.classList.toggle('sensitive-hidden', !visible);
@@ -122,6 +137,7 @@ function writeFormConfig(config) {
       element.value = config[key] ?? '';
     }
   }
+  updateLimitOrderHints();
 }
 
 function appendLog(line) {
@@ -640,8 +656,19 @@ toggleSensitiveBtn.addEventListener('click', () => {
   setSensitiveVisible(!sensitiveVisible);
 });
 
-cancelBidBtn?.addEventListener('click', async () => {
-  cancelBidBtn.disabled = true;
+mainForm.elements.namedItem('SIDE')?.addEventListener('change', updateLimitOrderHints);
+
+async function cancelActiveBidFromUi(sourceButton) {
+  if (sourceButton) {
+    sourceButton.disabled = true;
+  }
+  if (cancelBidBtn && cancelBidBtn !== sourceButton) {
+    cancelBidBtn.disabled = true;
+  }
+  if (mainCancelOrderBtn && mainCancelOrderBtn !== sourceButton) {
+    mainCancelOrderBtn.disabled = true;
+  }
+
   try {
     const result = await window.botApi.cancelBid();
 
@@ -656,8 +683,32 @@ cancelBidBtn?.addEventListener('click', async () => {
   } catch (err) {
     appendLog(`[${new Date().toISOString()}] [ERROR] ${err?.message || String(err)}`);
   } finally {
-    cancelBidBtn.disabled = false;
+    if (sourceButton) {
+      sourceButton.disabled = false;
+    }
+    if (cancelBidBtn && cancelBidBtn !== sourceButton) {
+      cancelBidBtn.disabled = false;
+    }
+    if (mainCancelOrderBtn && mainCancelOrderBtn !== sourceButton) {
+      mainCancelOrderBtn.disabled = false;
+    }
   }
+}
+
+cancelBidBtn?.addEventListener('click', async () => {
+  await cancelActiveBidFromUi(cancelBidBtn);
+});
+
+mainCancelOrderBtn?.addEventListener('click', async () => {
+  await cancelActiveBidFromUi(mainCancelOrderBtn);
+});
+
+mainRemoveRowBtn?.addEventListener('click', () => {
+  setMainActionFeedback('Only one Tensor limit order row is supported right now.', 'info');
+});
+
+addLimitOrderRowBtn?.addEventListener('click', () => {
+  setMainActionFeedback('Only one Tensor limit order row is supported right now.', 'info');
 });
 
 updateBtn?.addEventListener('click', () => {

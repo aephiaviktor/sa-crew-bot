@@ -532,7 +532,7 @@ h3 {
 
 .limit-orders-table th,
 .limit-orders-table td {
-  padding: 8px;
+  padding: 2px 8px;
   text-align: left;
   vertical-align: top;
 }
@@ -553,9 +553,51 @@ h3 {
   border-bottom: none;
 }
 
+.limit-orders-table tfoot td {
+  padding-top: 10px;
+  border-top: 1px solid rgba(143, 193, 255, 0.16);
+}
+
 .limit-orders-table select,
 .limit-orders-table input {
   width: 100%;
+}
+
+.cell-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 150px;
+}
+
+.cell-hint {
+  min-height: 14px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #9fc8ea;
+}
+
+.remove-cell {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.remove-cell .cell-stack {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.remove-row-btn,
+.cancel-order-btn,
+#add-limit-order-row-btn {
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
+.add-row-cell {
+  text-align: left;
 }
 
 .setup-accounts-grid {
