@@ -30,6 +30,7 @@ const DEFAULT_SETTINGS = {
 let mainWindow = null;
 let bot = null;
 let botRunning = false;
+let relaunchScheduled = false;
 
 const AEPHIA_TOKEN_VALIDATE_URL = 'https://api.aephia.com/token/validate';
 const APP_DISPLAY_NAME = 'SA Crew Bot';
@@ -55,6 +56,18 @@ async function runProjectCommand(command, args, options = {}) {
 async function gitOutput(args, options) {
   const result = await runProjectCommand('git', args, options);
   return result.stdout;
+}
+
+function scheduleAppRelaunch() {
+  if (relaunchScheduled) {
+    return;
+  }
+
+  relaunchScheduled = true;
+  setTimeout(() => {
+    app.relaunch();
+    app.exit(0);
+  }, 1200);
 }
 
 async function readRemotePackageJson() {
@@ -455,14 +468,7 @@ ipcMain.handle('app:check-update', async () => {
 });
 
 ipcMain.handle('app:apply-update', async () => {
-  if (botRunning) {
-    return {
-      ok: false,
-      status: 'bot_running',
-      message: 'Stop the bot before applying an app update.'
-    };
-  }
-
+  let stoppedBotForUpdate = false;
   try {
     const before = await getUpdateState(true);
     if (!before.updateAvailable) {
@@ -482,19 +488,35 @@ ipcMain.handle('app:apply-update', async () => {
       };
     }
 
+    if (botRunning) {
+      await stopBot();
+      stoppedBotForUpdate = true;
+    }
+
     await gitOutput(['pull', '--ff-only', 'origin', 'main'], { timeout: 120000 });
     await runProjectCommand('npm', ['install'], { timeout: 240000, maxBuffer: 4 * 1024 * 1024 });
     await runProjectCommand('npm', ['run', 'build'], { timeout: 240000, maxBuffer: 4 * 1024 * 1024 });
 
     const after = await getUpdateState(false);
+    scheduleAppRelaunch();
     return {
       ok: true,
       status: 'updated',
       previousCommit: before.currentCommit,
       previousShortCommit: before.currentShortCommit,
+      stoppedBotForUpdate,
+      relaunching: true,
       ...after
     };
   } catch (err) {
+    if (stoppedBotForUpdate) {
+      try {
+        await startBotFromSettings();
+      } catch (restartErr) {
+        logger.error('Bot restart after failed update failed:', restartErr);
+      }
+    }
+
     return {
       ok: false,
       status: 'error',

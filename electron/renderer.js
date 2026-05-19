@@ -653,8 +653,8 @@ updateConfirmBtn?.addEventListener('click', async () => {
 
     if (result?.ok && result.status === 'updated') {
       renderUpdateModalState(result);
-      updateMessageEl.textContent = 'Updated to v' + (result.remoteVersion || result.currentVersion || appVersion) + '. Restart the app to load it.';
-      appendLog('[' + new Date().toISOString() + '] [INFO] App updated. Restart required.');
+      updateMessageEl.textContent = 'Updated to v' + (result.remoteVersion || result.currentVersion || appVersion) + '. Restarting app...';
+      appendLog('[' + new Date().toISOString() + '] [INFO] App updated. Restarting automatically...');
     } else if (result?.ok) {
       renderUpdateModalState(result);
       appendLog('[' + new Date().toISOString() + '] [INFO] App update status: ' + (result.status || 'ok'));
