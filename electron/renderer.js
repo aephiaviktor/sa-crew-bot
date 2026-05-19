@@ -1,7 +1,6 @@
 const mainFields = [
   'SIDE',
   'QUANTITY',
-  'MIN_BID_SOL',
   'MAX_BID_SOL'
 ];
 
@@ -16,6 +15,7 @@ const setupFields = [
   'BID_ID',
   'MARGIN_ACCOUNT',
   'BID_STEP_SOL',
+  'MIN_BID_SOL',
   'CHECK_INTERVAL_MINUTES',
   'MIN_RELEVANT_BID_QUANTITY'
 ];
@@ -70,6 +70,10 @@ let lastKnownOpenOrders = [];
 let lastKnownRecentActivity = [];
 let lastUiRefreshAtMs = null;
 let availableUpdate = null;
+
+function setUpdateButtonAvailable(available) {
+  updateBtn?.classList.toggle('update-available', Boolean(available));
+}
 
 function setRunning(running) {
   startBtn.disabled = running;
@@ -208,6 +212,10 @@ function renderUpdateModalState(result, error = null) {
   const currentVersion = result?.currentVersion || appVersion;
   const latestVersion = result?.remoteVersion || result?.currentVersion || appVersion;
 
+  if (result?.ok) {
+    setUpdateButtonAvailable(result.updateAvailable);
+  }
+
   updateCurrentVersionEl.textContent = 'v' + currentVersion;
   updateLatestVersionEl.textContent = result ? 'v' + latestVersion : 'Unknown';
   updateConfirmBtn.disabled = !result?.updateAvailable || result?.hasLocalChanges;
@@ -259,6 +267,17 @@ async function openUpdateDialog() {
     availableUpdate = null;
     renderUpdateModalState(null, err);
     appendLog('[' + new Date().toISOString() + '] [ERROR] Update check failed: ' + (err?.message || String(err)));
+  }
+}
+
+async function refreshUpdateButtonState() {
+  try {
+    const result = await window.botApi.checkUpdate();
+    if (result?.ok) {
+      setUpdateButtonAvailable(result.updateAvailable);
+    }
+  } catch {
+    setUpdateButtonAvailable(false);
   }
 }
 
@@ -532,6 +551,7 @@ async function boot() {
   }
 
   await refreshBotStatus();
+  void refreshUpdateButtonState();
   startStatusPolling();
 }
 
