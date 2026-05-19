@@ -17,7 +17,7 @@ const setupFields = [
   'MARGIN_ACCOUNT',
   'BID_STEP_SOL',
   'CHECK_INTERVAL_MINUTES',
-  'WHITELIST'
+  'MIN_RELEVANT_BID_QUANTITY'
 ];
 
 const fields = [...mainFields, ...setupFields];

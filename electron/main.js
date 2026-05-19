@@ -24,7 +24,8 @@ const DEFAULT_SETTINGS = {
   MIN_BID_SOL: '0.001',
   MAX_BID_SOL: '0.008',
   BID_STEP_SOL: '0.00001',
-  CHECK_INTERVAL_MINUTES: '30'
+  CHECK_INTERVAL_MINUTES: '30',
+  MIN_RELEVANT_BID_QUANTITY: ''
 };
 
 let mainWindow = null;
@@ -225,9 +226,13 @@ const logger = {
 async function loadSettings() {
   try {
     const raw = await fs.readFile(settingsPath(), 'utf8');
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    const settings = { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    settings.MIN_RELEVANT_BID_QUANTITY ||= settings.QUANTITY;
+    return settings;
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    const settings = { ...DEFAULT_SETTINGS };
+    settings.MIN_RELEVANT_BID_QUANTITY ||= settings.QUANTITY;
+    return settings;
   }
 }
 
@@ -256,6 +261,9 @@ async function persistBidIdentityFromStatus(status) {
 }
 
 function makeBotConfig(s) {
+  const quantity = Number(s.QUANTITY);
+  const minRelevantBidQuantity = Number(s.MIN_RELEVANT_BID_QUANTITY);
+
   return {
     rpcUrl: s.RPC_URL,
     hotWalletSecret: s.HOT_WALLET_SECRET,
@@ -266,12 +274,12 @@ function makeBotConfig(s) {
     bidState: s.BID_STATE,
     bidId: s.BID_ID,
     marginAccount: s.MARGIN_ACCOUNT,
-    quantity: Number(s.QUANTITY),
+    quantity,
+    minRelevantBidQuantity: Number.isFinite(minRelevantBidQuantity) && minRelevantBidQuantity > 0 ? minRelevantBidQuantity : quantity,
     minBidSol: Number(s.MIN_BID_SOL),
     maxBidSol: Number(s.MAX_BID_SOL),
     bidStepSol: Number(s.BID_STEP_SOL),
-    checkIntervalMinutes: Number(s.CHECK_INTERVAL_MINUTES),
-    whitelist: s.WHITELIST
+    checkIntervalMinutes: Number(s.CHECK_INTERVAL_MINUTES)
   };
 }
 

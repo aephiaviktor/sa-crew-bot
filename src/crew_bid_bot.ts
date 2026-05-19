@@ -31,12 +31,12 @@ export type CrewBidBotConfig = {
   marginAccount: string;
 
   quantity: number;
+  minRelevantBidQuantity: number;
 
   minBidSol: number;
   maxBidSol: number;
   bidStepSol: number;
   checkIntervalMinutes: number;
-  whitelist?: string;
 };
 
 export type CrewBidBotLogger = {
@@ -222,7 +222,6 @@ export class CrewBidBot {
   private readonly connection: Connection;
   private readonly wallet: Keypair;
   private readonly tcompSdk: TCompSDK;
-  private readonly whitelistOwners: Set<string>;
 
   private running = false;
   private loopTimer: NodeJS.Timeout | null = null;
@@ -283,12 +282,6 @@ export class CrewBidBot {
     );
 
     this.tcompSdk = new TCompSDK({ provider });
-    this.whitelistOwners = new Set(
-      String(config.whitelist ?? '')
-        .split(/[\n,]+/)
-        .map((entry) => entry.trim().toLowerCase())
-        .filter(Boolean)
-    );
 
     if (config.side !== 'buy') {
       throw new Error(`Unsupported side: ${config.side}. Only buy is currently implemented.`);
@@ -411,8 +404,7 @@ export class CrewBidBot {
         ownBidState: this.config.bidState,
         slugUuid: this.config.collectionSlugUuid,
         targetId: this.config.targetId,
-        minRelevantBidQuantity: this.config.quantity,
-        whitelistOwners: Array.from(this.whitelistOwners)
+        minRelevantBidQuantity: this.config.minRelevantBidQuantity
       }),
       this.getSolBalance(),
       this.connection.getBalance(marginAccountPk, 'confirmed').catch(() => 0)
