@@ -207,11 +207,9 @@ function setUpdateModalOpen(open) {
 function renderUpdateModalState(result, error = null) {
   const currentVersion = result?.currentVersion || appVersion;
   const latestVersion = result?.remoteVersion || result?.currentVersion || appVersion;
-  const currentCommit = result?.currentShortCommit ? ' (' + result.currentShortCommit + ')' : '';
-  const latestCommit = result?.remoteShortCommit ? ' (' + result.remoteShortCommit + ')' : '';
 
-  updateCurrentVersionEl.textContent = 'v' + currentVersion + currentCommit;
-  updateLatestVersionEl.textContent = result ? 'v' + latestVersion + latestCommit : 'Unknown';
+  updateCurrentVersionEl.textContent = 'v' + currentVersion;
+  updateLatestVersionEl.textContent = result ? 'v' + latestVersion : 'Unknown';
   updateConfirmBtn.disabled = !result?.updateAvailable || result?.hasLocalChanges;
 
   if (error) {
