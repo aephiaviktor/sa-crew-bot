@@ -26,7 +26,6 @@ let appVersion = 'unknown';
 
 const mainForm = document.getElementById('main-form');
 const form = document.getElementById('config-form');
-const statusEl = document.getElementById('status');
 const logsEl = document.getElementById('logs');
 const saveBtn = document.getElementById('save-btn');
 const startBtn = document.getElementById('start-btn');
@@ -51,9 +50,13 @@ const marginNrEl = document.getElementById('margin-nr');
 const lastActionEl = document.getElementById('last-action');
 const lastCheckAtEl = document.getElementById('last-check-at');
 const cancelBidBtn = document.getElementById('cancel-bid-btn');
-const checkUpdateBtn = document.getElementById('check-update-btn');
-const applyUpdateBtn = document.getElementById('apply-update-btn');
-const updateStatusEl = document.getElementById('update-status');
+const updateBtn = document.getElementById('update-btn');
+const updateModal = document.getElementById('update-modal');
+const updateCurrentVersionEl = document.getElementById('update-current-version');
+const updateLatestVersionEl = document.getElementById('update-latest-version');
+const updateMessageEl = document.getElementById('update-message');
+const updateConfirmBtn = document.getElementById('update-confirm-btn');
+const updateCancelBtn = document.getElementById('update-cancel-btn');
 
 const openOrdersCountEl = document.getElementById('open-orders-count');
 const openOrdersListEl = document.getElementById('open-orders-list');
@@ -65,9 +68,9 @@ let statusPollHandle = null;
 let lastKnownOpenOrders = [];
 let lastKnownRecentActivity = [];
 let lastUiRefreshAtMs = null;
+let availableUpdate = null;
 
 function setRunning(running) {
-  statusEl.textContent = `Status: ${running ? 'running' : 'stopped'}`;
   startBtn.disabled = running;
   stopBtn.disabled = !running;
 
@@ -184,44 +187,69 @@ function formatRuntime(startedAt, running) {
   return 'Running for ' + formatRelativeDuration(elapsed) + versionSuffix;
 }
 
-function describeUpdateState(state) {
-  if (!state?.ok) {
-    return state?.message || 'Update check failed';
-  }
-
-  const current = 'v' + (state.currentVersion || appVersion);
-  const currentCommit = state.currentShortCommit ? ' (' + state.currentShortCommit + ')' : '';
-  const remote = state.remoteVersion ? 'v' + state.remoteVersion : 'remote';
-  const remoteCommit = state.remoteShortCommit ? ' (' + state.remoteShortCommit + ')' : '';
-
-  if (state.updateAvailable) {
-    return 'Update available: ' + current + currentCommit + ' -> ' + remote + remoteCommit;
-  }
-
-  return 'Up to date: ' + current + currentCommit;
-}
-
-function setUpdateBusy(busy) {
-  if (checkUpdateBtn) {
-    checkUpdateBtn.disabled = busy;
-  }
-  if (applyUpdateBtn) {
-    applyUpdateBtn.disabled = busy || !applyUpdateBtn.dataset.available;
+function setUpdateModalOpen(open) {
+  if (updateModal) {
+    updateModal.hidden = !open;
   }
 }
 
-function renderUpdateState(state) {
-  if (!updateStatusEl) {
+function renderUpdateModalState(result, error = null) {
+  const currentVersion = result?.currentVersion || appVersion;
+  const latestVersion = result?.remoteVersion || result?.currentVersion || appVersion;
+  const currentCommit = result?.currentShortCommit ? ' (' + result.currentShortCommit + ')' : '';
+  const latestCommit = result?.remoteShortCommit ? ' (' + result.remoteShortCommit + ')' : '';
+
+  updateCurrentVersionEl.textContent = 'v' + currentVersion + currentCommit;
+  updateLatestVersionEl.textContent = result ? 'v' + latestVersion + latestCommit : 'Unknown';
+  updateConfirmBtn.disabled = !result?.updateAvailable || result?.hasLocalChanges;
+
+  if (error) {
+    updateLatestVersionEl.textContent = 'Unavailable';
+    updateMessageEl.textContent = 'Update check failed: ' + (error?.message || String(error));
+    updateConfirmBtn.textContent = 'Update';
     return;
   }
 
-  updateStatusEl.textContent = describeUpdateState(state);
+  if (result && !result.ok) {
+    updateLatestVersionEl.textContent = 'Unavailable';
+    updateMessageEl.textContent = 'Update check failed: ' + (result.message || 'unknown error');
+    updateConfirmBtn.textContent = 'Update';
+    return;
+  }
 
-  if (applyUpdateBtn) {
-    const available = Boolean(state?.ok && state.updateAvailable && !state.hasLocalChanges);
-    applyUpdateBtn.dataset.available = available ? '1' : '';
-    applyUpdateBtn.disabled = !available;
-    applyUpdateBtn.title = state?.hasLocalChanges ? 'Commit or stash local source changes before updating.' : '';
+  if (result?.hasLocalChanges) {
+    updateMessageEl.textContent = 'Local source changes are present. Commit or stash them before updating.';
+    updateConfirmBtn.textContent = 'Update';
+    return;
+  }
+
+  if (result?.updateAvailable) {
+    updateMessageEl.textContent = 'A newer SA Crew Bot version is available on GitHub.';
+    updateConfirmBtn.textContent = 'Update to v' + latestVersion;
+    return;
+  }
+
+  updateMessageEl.textContent = 'SA Crew Bot is already up to date.';
+  updateConfirmBtn.textContent = 'Update';
+}
+
+async function openUpdateDialog() {
+  availableUpdate = null;
+  updateCurrentVersionEl.textContent = 'v' + appVersion;
+  updateLatestVersionEl.textContent = 'Checking...';
+  updateMessageEl.textContent = 'Checking GitHub for the latest version...';
+  updateConfirmBtn.textContent = 'Update';
+  updateConfirmBtn.disabled = true;
+  updateCancelBtn.disabled = false;
+  setUpdateModalOpen(true);
+
+  try {
+    availableUpdate = await window.botApi.checkUpdate();
+    renderUpdateModalState(availableUpdate);
+  } catch (err) {
+    availableUpdate = null;
+    renderUpdateModalState(null, err);
+    appendLog('[' + new Date().toISOString() + '] [ERROR] Update check failed: ' + (err?.message || String(err)));
   }
 }
 
@@ -465,12 +493,6 @@ function stopStatusPolling() {
 async function boot() {
   const versionInfo = await window.botApi.getAppVersion();
   appVersion = versionInfo?.version || appVersion;
-  renderUpdateState({
-    ok: true,
-    currentVersion: appVersion,
-    currentShortCommit: null,
-    updateAvailable: false
-  });
 
   const settings = await window.botApi.getSettings();
   writeFormConfig(settings);
@@ -557,43 +579,46 @@ cancelBidBtn?.addEventListener('click', async () => {
   }
 });
 
-checkUpdateBtn?.addEventListener('click', async () => {
-  setUpdateBusy(true);
-  updateStatusEl.textContent = 'Checking for updates...';
-  try {
-    const result = await window.botApi.checkUpdate();
-    renderUpdateState(result);
-    if (!result?.ok) {
-      appendLog('[' + new Date().toISOString() + '] [ERROR] Update check failed: ' + (result?.message || 'unknown error'));
-    }
-  } catch (err) {
-    updateStatusEl.textContent = err?.message || String(err);
-    appendLog('[' + new Date().toISOString() + '] [ERROR] Update check failed: ' + (err?.message || String(err)));
-  } finally {
-    setUpdateBusy(false);
+updateBtn?.addEventListener('click', () => {
+  void openUpdateDialog();
+});
+
+updateCancelBtn?.addEventListener('click', () => {
+  setUpdateModalOpen(false);
+});
+
+updateModal?.addEventListener('click', (event) => {
+  if (event.target === updateModal) {
+    setUpdateModalOpen(false);
   }
 });
 
-applyUpdateBtn?.addEventListener('click', async () => {
-  setUpdateBusy(true);
-  updateStatusEl.textContent = 'Applying update...';
+updateConfirmBtn?.addEventListener('click', async () => {
+  if (!availableUpdate?.updateAvailable) return;
+  updateConfirmBtn.disabled = true;
+  updateCancelBtn.disabled = true;
+  updateMessageEl.textContent = 'Updating SA Crew Bot from GitHub...';
+  appendLog('[' + new Date().toISOString() + '] [INFO] Updating SA Crew Bot from GitHub...');
+
   try {
     const result = await window.botApi.applyUpdate();
-    renderUpdateState(result);
 
     if (result?.ok && result.status === 'updated') {
-      updateStatusEl.textContent = 'Updated to v' + (result.remoteVersion || result.currentVersion || appVersion) + '. Restart the app to load it.';
+      renderUpdateModalState(result);
+      updateMessageEl.textContent = 'Updated to v' + (result.remoteVersion || result.currentVersion || appVersion) + '. Restart the app to load it.';
       appendLog('[' + new Date().toISOString() + '] [INFO] App updated. Restart required.');
     } else if (result?.ok) {
+      renderUpdateModalState(result);
       appendLog('[' + new Date().toISOString() + '] [INFO] App update status: ' + (result.status || 'ok'));
     } else {
+      renderUpdateModalState(availableUpdate, new Error(result?.message || 'unknown error'));
       appendLog('[' + new Date().toISOString() + '] [ERROR] App update failed: ' + (result?.message || 'unknown error'));
     }
   } catch (err) {
-    updateStatusEl.textContent = err?.message || String(err);
+    renderUpdateModalState(availableUpdate, err);
     appendLog('[' + new Date().toISOString() + '] [ERROR] App update failed: ' + (err?.message || String(err)));
   } finally {
-    setUpdateBusy(false);
+    updateCancelBtn.disabled = false;
   }
 });
 
