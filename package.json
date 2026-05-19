@@ -1,6 +1,6 @@
 {
   "name": "sa-crew-bot",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "main": "electron/main.js",
   "type": "commonjs",
@@ -20,5 +20,16 @@
     "@types/node": "^24.5.2",
     "png-to-ico": "^3.0.1",
     "typescript": "^5.9.2"
+  },
+  "overrides": {
+    "@tensor-hq/tensor-common": {
+      "axios": "^1.16.1"
+    },
+    "ethjs-unit": {
+      "bn.js": "^4.12.3"
+    },
+    "number-to-bn": {
+      "bn.js": "^4.12.3"
+    }
   }
 }
