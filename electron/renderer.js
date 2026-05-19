@@ -70,6 +70,8 @@ let lastKnownOpenOrders = [];
 let lastKnownRecentActivity = [];
 let lastUiRefreshAtMs = null;
 let availableUpdate = null;
+let lastUpdateCheckCycleCompletedAt = null;
+let updateCheckInProgress = false;
 
 function setUpdateButtonAvailable(available) {
   updateBtn?.classList.toggle('update-available', Boolean(available));
@@ -271,6 +273,11 @@ async function openUpdateDialog() {
 }
 
 async function refreshUpdateButtonState() {
+  if (updateCheckInProgress) {
+    return;
+  }
+
+  updateCheckInProgress = true;
   try {
     const result = await window.botApi.checkUpdate();
     if (result?.ok) {
@@ -278,6 +285,8 @@ async function refreshUpdateButtonState() {
     }
   } catch {
     setUpdateButtonAvailable(false);
+  } finally {
+    updateCheckInProgress = false;
   }
 }
 
@@ -463,6 +472,10 @@ function renderStatusSnapshot(status) {
   }
   if (lastCycleAtEl) {
     lastCycleAtEl.textContent = formatTimestamp(status?.lastCycleCompletedAt);
+  }
+  if (status?.lastCycleCompletedAt && status.lastCycleCompletedAt !== lastUpdateCheckCycleCompletedAt) {
+    lastUpdateCheckCycleCompletedAt = status.lastCycleCompletedAt;
+    void refreshUpdateButtonState();
   }
   if (nextCycleInEl) {
     const configuredInterval = Number((form.elements.namedItem('CHECK_INTERVAL_MINUTES') || {}).value ?? NaN);
