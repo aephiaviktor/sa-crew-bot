@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SA Crew Bid Bot</title>
+    <link rel="stylesheet" href="./renderer.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <main class="app-main">
+        <div class="app">
+          <div class="app-header">
+            <h1>SA Crew Bid Bot</h1>
+            <p id="status">Status: stopped</p>
+          </div>
+
+          <section class="panel app-panel">
+            <div class="tabs" role="tablist" aria-label="Bot tabs">
+              <button class="tab-button active" id="tab-main" type="button" data-tab="main" role="tab" aria-selected="true">
+                Tensor
+              </button>
+              <button class="tab-button" id="tab-setup" type="button" data-tab="setup" role="tab" aria-selected="false">
+                Setup
+              </button>
+            </div>
+
+            <section class="tab-panel active" data-panel="main" role="tabpanel" aria-labelledby="tab-main">
+              <section class="subpanel">
+                <h2>Trading</h2>
+                <form id="main-form" class="config-grid">
+                  <label>
+                    Side
+                    <select name="SIDE">
+                      <option value="buy">buy</option>
+                      <option value="sell">sell</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    Quantity
+                    <input name="QUANTITY" type="number" />
+                  </label>
+
+                  <label>
+                    Min Bid SOL
+                    <input name="MIN_BID_SOL" type="text" />
+                  </label>
+
+                  <label>
+                    Max Bid SOL
+                    <input name="MAX_BID_SOL" type="text" />
+                  </label>
+                </form>
+
+                <div class="actions">
+                  <button id="save-btn" type="button">Save Settings</button>
+                  <button id="start-btn" type="button">Start Bot</button>
+                  <button id="stop-btn" type="button">Stop Bot</button>
+                </div>
+              </section>
+            </section>
+
+            <section class="tab-panel" data-panel="setup" role="tabpanel" aria-labelledby="tab-setup">
+              <div class="setup-toolbar">
+                <h2>Setup</h2>
+                <button id="toggle-sensitive-btn" type="button">Show Sensitive Fields</button>
+              </div>
+
+              <form id="config-form" class="config-grid sensitive-hidden">
+                <label>
+                  Aephia API Key
+                  <input class="sensitive-field" name="AEPHIA_API_KEY" type="text" autocomplete="off" />
+                </label>
+
+                <label>
+                  RPC URL
+                  <input class="sensitive-field" name="RPC_URL" type="text" />
+                </label>
+
+                <label>
+                  Hot Wallet Secret
+                  <textarea class="sensitive-field" name="HOT_WALLET_SECRET" rows="3"></textarea>
+                </label>
+
+                <div class="setup-accounts-grid">
+                  <label>
+                    Collection Slug UUID
+                    <input name="COLLECTION_SLUG_UUID" type="text" />
+                  </label>
+
+                  <label>
+                    Target ID
+                    <input name="TARGET_ID" type="text" />
+                  </label>
+
+                  <label>
+                    Maker Broker
+                    <input name="MAKER_BROKER" type="text" />
+                  </label>
+
+                  <label>
+                    Margin Account
+                    <input name="MARGIN_ACCOUNT" type="text" />
+                  </label>
+
+                  <label>
+                    Bid State
+                    <input name="BID_STATE" type="text" />
+                  </label>
+
+                  <label>
+                    Bid ID
+                    <input name="BID_ID" type="text" />
+                  </label>
+                </div>
+
+                <label>
+                  Bid Step SOL
+                  <input name="BID_STEP_SOL" type="text" />
+                </label>
+
+                <label>
+                  Check Interval Minutes
+                  <input name="CHECK_INTERVAL_MINUTES" type="number" />
+                </label>
+
+                <label>
+                  Whitelist
+                  <textarea name="WHITELIST" rows="6" placeholder="One wallet per line"></textarea>
+                </label>
+              </form>
+
+              <section class="subpanel setup-logs-panel">
+                <h2>Logs</h2>
+                <pre id="logs"></pre>
+              </section>
+            </section>
+          </section>
+        </div>
+      </main>
+
+      <aside class="status-rail">
+        <div class="status-rail-inner">
+          <section class="status-panel status-panel-header">
+            <div class="status-title-row">
+              <div>
+                <h2 class="status-panel-title">Status</h2>
+                <p class="status-panel-subtitle" id="bot-runtime">Stopped</p>
+              </div>
+              <span class="running-pill stopped" id="running-pill">Stopped</span>
+            </div>
+
+            <div class="balance-grid">
+              <div class="balance-card">
+                <span class="balance-label">SOL</span>
+                <strong class="balance-value" id="sol-balance">—</strong>
+              </div>
+              <div class="balance-card">
+                <span class="balance-label">SOL (margin)</span>
+                <strong class="balance-value" id="margin-sol-balance">—</strong>
+              </div>
+            </div>
+
+            <div class="wallet-line">
+              <span class="wallet-label">Public wallet used</span>
+              <span class="wallet-value mono" id="wallet-address">—</span>
+            </div>
+
+            <div class="status-metrics" id="status-metrics">
+              <div class="metric-row">
+                <span>Last cycle</span>
+                <span id="last-cycle-at">—</span>
+              </div>
+              <div class="metric-row">
+                <span>Current cycle</span>
+                <span id="next-cycle-in">—</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="status-panel">
+            <div class="status-section-header">
+              <h3>Bid Status</h3>
+            </div>
+
+            <div class="status-metrics">
+              <div class="metric-row">
+                <span>Current bid</span>
+                <span id="current-bid">—</span>
+              </div>
+              <div class="metric-row">
+                <span>Best competing bid</span>
+                <span id="best-competing-bid">—</span>
+              </div>
+              <div class="metric-row">
+                <span>Best ask</span>
+                <span id="best-ask">—</span>
+              </div>
+              <div class="metric-row">
+                <span>Target bid</span>
+                <span id="target-bid">—</span>
+              </div>
+              <div class="metric-row">
+                <span>Last action</span>
+                <span id="last-action">—</span>
+              </div>
+              <div class="metric-row">
+                <span>Last check</span>
+                <span id="last-check-at">—</span>
+              </div>
+            </div>
+
+            <div class="actions">
+              <button id="cancel-bid-btn" type="button">Cancel Bid</button>
+            </div>
+          </section>
+
+          <section class="status-panel">
+            <div class="status-section-header">
+              <h3>Open Orders</h3>
+              <span class="section-count" id="open-orders-count">0</span>
+            </div>
+            <div id="open-orders-list" class="status-list">
+              <div class="empty-state">No open orders</div>
+            </div>
+          </section>
+
+          <section class="status-panel">
+            <div class="status-section-header">
+              <h3>Recent Activity</h3>
+              <span class="section-count" id="recent-activity-count">0</span>
+            </div>
+            <div id="recent-activity-list" class="status-list">
+              <div class="empty-state">No recent activity</div>
+            </div>
+          </section>
+        </div>
+      </aside>
+    </div>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>
