@@ -392,6 +392,7 @@ ipcMain.handle('bot:get-status', async () => {
       marginAccount: null,
       currentBidLamports: null,
       bestCompetingBidLamports: null,
+      competingBidLamports: [],
       bestAskLamports: null,
       targetBidLamports: null,
       lastCheckAt: null,

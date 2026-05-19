@@ -276,6 +276,7 @@ export type TensorTcompBid = {
 export type CrewMarketSnapshot = {
   bestAskLamports: number | null;
   bestCompetingBidLamports: number | null;
+  competingBidLamports: number[];
   bestCompetingBidAddress: string | null;
   bestCompetingBidOwnerAddress: string | null;
   bestCompetingBidQuantity: number | null;
@@ -439,6 +440,7 @@ export async function fetchCrewMarketSnapshot(params: {
   return {
     bestAskLamports,
     bestCompetingBidLamports: bestCompetingBid ? toLamports(bestCompetingBid.amount) : null,
+    competingBidLamports: competingBids.map((bid) => toLamports(bid.amount)),
     bestCompetingBidAddress: bestCompetingBid?.address ?? null,
     bestCompetingBidOwnerAddress: bestCompetingBid?.ownerAddress ?? null,
     bestCompetingBidQuantity: bestCompetingBid?.quantity ?? null,
@@ -459,6 +461,7 @@ export async function fetchCrewMarketSnapshot(params: {
 
 export function computeTargetCrewBidLamports(input: {
   bestCompetingBidLamports: number | null;
+  competingBidLamports?: number[];
   minBidLamports: number;
   maxBidLamports: number;
   bidStepLamports: number;
@@ -466,9 +469,18 @@ export function computeTargetCrewBidLamports(input: {
   minSpreadLamports?: number;
 }): number {
   const minSpreadLamports = input.minSpreadLamports ?? 10_000;
+  const competingBidLamports = input.competingBidLamports?.length
+    ? input.competingBidLamports
+    : input.bestCompetingBidLamports != null
+      ? [input.bestCompetingBidLamports]
+      : [];
+  const bestReachableCompetingBidLamports =
+    competingBidLamports
+      .filter((amount) => amount < input.maxBidLamports)
+      .sort((a, b) => b - a)[0] ?? null;
   const anchor =
-    input.bestCompetingBidLamports != null
-      ? input.bestCompetingBidLamports + input.bidStepLamports
+    bestReachableCompetingBidLamports != null
+      ? bestReachableCompetingBidLamports + input.bidStepLamports
       : input.minBidLamports;
 
   let target = Math.max(input.minBidLamports, Math.min(input.maxBidLamports, anchor));

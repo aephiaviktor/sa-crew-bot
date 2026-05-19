@@ -73,6 +73,7 @@ export type CrewBidBotStatus = {
 
   currentBidLamports: number | null;
   bestCompetingBidLamports: number | null;
+  competingBidLamports: number[];
   bestAskLamports: number | null;
   targetBidLamports: number | null;
 
@@ -100,6 +101,7 @@ const defaultLogger: CrewBidBotLogger = {
 type CrewMarketState = {
   currentBidLamports: number | null;
   bestCompetingBidLamports: number | null;
+  competingBidLamports: number[];
   bestCompetingBidAddress: string | null;
   bestCompetingBidOwnerAddress: string | null;
   bestCompetingBidQuantity: number | null;
@@ -241,6 +243,7 @@ export class CrewBidBot {
   private state: CrewMarketState = {
     currentBidLamports: null,
     bestCompetingBidLamports: null,
+    competingBidLamports: [],
     bestCompetingBidAddress: null,
     bestCompetingBidOwnerAddress: null,
     bestCompetingBidQuantity: null,
@@ -316,6 +319,7 @@ export class CrewBidBot {
       marginAccount: this.config.marginAccount,
       currentBidLamports: this.state.currentBidLamports,
       bestCompetingBidLamports: this.state.bestCompetingBidLamports,
+      competingBidLamports: this.state.competingBidLamports,
       bestAskLamports: this.state.bestAskLamports,
       targetBidLamports: this.state.targetBidLamports,
       lastCheckAt: this.state.lastCheckAt,
@@ -416,6 +420,7 @@ export class CrewBidBot {
 
     this.state.currentBidLamports = snapshot.ownBidLamports;
     this.state.bestCompetingBidLamports = snapshot.bestCompetingBidLamports;
+    this.state.competingBidLamports = snapshot.competingBidLamports;
     this.state.bestCompetingBidAddress = snapshot.bestCompetingBidAddress;
     this.state.bestCompetingBidOwnerAddress = snapshot.bestCompetingBidOwnerAddress;
     this.state.bestCompetingBidQuantity = snapshot.bestCompetingBidQuantity;
@@ -474,7 +479,7 @@ export class CrewBidBot {
       return null;
     }
 
-    const requiredLamports = this.computeTensorBidSpendLamports(priceLamports);
+    const requiredLamports = this.computeEstimatedFillSpendLamports(priceLamports);
 
     if (this.state.ownBidSolBalanceLamports != null) {
       return Math.max(0, Math.floor(this.state.ownBidSolBalanceLamports / requiredLamports));
@@ -487,7 +492,7 @@ export class CrewBidBot {
     return null;
   }
 
-  private computeTensorBidSpendLamports(limitBidLamports: number): number {
+  private computeEstimatedFillSpendLamports(limitBidLamports: number): number {
     return applyTensorTakerFeesLamports(limitBidLamports, this.state.royaltyFeeBps);
   }
 
@@ -524,6 +529,7 @@ export class CrewBidBot {
   computeTargetBid(): number {
     const target = computeTargetCrewBidLamports({
       bestCompetingBidLamports: this.state.bestCompetingBidLamports,
+      competingBidLamports: this.state.competingBidLamports,
       minBidLamports: solToLamports(this.config.minBidSol),
       maxBidLamports: solToLamports(this.config.maxBidSol),
       bidStepLamports: solToLamports(this.config.bidStepSol),
@@ -728,7 +734,6 @@ export class CrewBidBot {
 
   private async sendBidUpdate(limitBidLamports: number): Promise<void> {
     const ownerPk = this.wallet.publicKey;
-    const amountLamports = this.computeTensorBidSpendLamports(limitBidLamports);
 
     const bidIdPk = publicKeyFromString(this.config.bidId, 'bidId');
     const targetIdPk = publicKeyFromString(this.config.targetId, 'targetId');
@@ -736,7 +741,7 @@ export class CrewBidBot {
     const makerBrokerPk = optionalPublicKeyFromString(this.config.makerBroker);
 
     this.logger.info(
-      `Sending Tensor bid update: limit=${limitBidLamports} amount=${amountLamports} royaltyFeeBps=${this.state.royaltyFeeBps ?? 0} quantity=${this.config.quantity}`
+      `Sending Tensor bid update: amount=${limitBidLamports} estimatedFillSpend=${this.computeEstimatedFillSpendLamports(limitBidLamports)} royaltyFeeBps=${this.state.royaltyFeeBps ?? 0} quantity=${this.config.quantity}`
     );
 
     const {
@@ -744,7 +749,7 @@ export class CrewBidBot {
       bidState
     } = await this.tcompSdk.bid({
       owner: ownerPk,
-      amount: new BN(amountLamports),
+      amount: new BN(limitBidLamports),
       expireInSec: null,
       privateTaker: null,
       bidId: bidIdPk,
@@ -761,7 +766,6 @@ export class CrewBidBot {
 
     this.config.bidState = bidState.toBase58();
     this.state.ownBidAddress = this.config.bidState;
-    this.state.ownBidFilledQuantity = 0;
     this.logger.info(`Tensor bid update confirmed: ${sig}`);
   }
 
