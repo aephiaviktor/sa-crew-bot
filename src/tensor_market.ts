@@ -1,5 +1,5 @@
 const TENSOR_GRAPHQL_URL = 'https://graphql.tensor.trade/graphql';
-const TENSOR_TAKER_FEE_BPS = 200;
+export const TENSOR_TAKER_FEE_BPS = 200;
 
 export const STAR_ATLAS_CREW_COLLECTION_UUID = '42c0b80a-5945-4a18-84d3-467af9ccb9a2';
 export const STAR_ATLAS_CREW_TARGET_ID = '13oBYyDzdGJxMJPdzRjmCBALL5akjJkarK1C43SUt2Ep';
@@ -386,9 +386,9 @@ export function sortListingsAscByPrice(a: TensorListingPrice, b: TensorListingPr
   return toLamports(a.price) - toLamports(b.price);
 }
 
-function applyTakerFeesToListingLamports(listingLamports: number, royaltyFeeBps: number | null): number {
+export function applyTensorTakerFeesLamports(amountLamports: number, royaltyFeeBps: number | null): number {
   const totalBps = 10_000 + TENSOR_TAKER_FEE_BPS + Math.max(0, royaltyFeeBps ?? 0);
-  return Math.ceil((listingLamports * totalBps) / 10_000);
+  return Math.ceil((amountLamports * totalBps) / 10_000);
 }
 
 export async function fetchCrewMarketSnapshot(params: {
@@ -408,7 +408,7 @@ export async function fetchCrewMarketSnapshot(params: {
     .filter((listing) => !whitelistOwners.has(String(listing.owner ?? '').toLowerCase()))
     .sort(sortListingsAscByPrice);
   const bestAskLamports = listings.length
-    ? applyTakerFeesToListingLamports(toLamports(listings[0].price), listingData.royaltyFeeBps)
+    ? applyTensorTakerFeesLamports(toLamports(listings[0].price), listingData.royaltyFeeBps)
     : null;
 
   const genericCollectionBids = bids.filter((bid) => isGenericCrewCollectionBid(bid, targetId)).sort(sortBidsDescByAmount);

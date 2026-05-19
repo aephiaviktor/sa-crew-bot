@@ -4,7 +4,13 @@ import { AnchorProvider, Wallet } from '@coral-xyz/anchor';
 import BN from 'bn.js';
 import { Connection, Keypair, PublicKey, Transaction, TransactionInstruction, Signer } from '@solana/web3.js';
 import { TCompSDK, Target } from '@tensor-oss/tcomp-sdk';
-import { type CrewMarketSnapshot, computeTargetCrewBidLamports, fetchCrewMarketSnapshot, STAR_ATLAS_CREW_TARGET_ID } from './tensor_market';
+import {
+  type CrewMarketSnapshot,
+  applyTensorTakerFeesLamports,
+  computeTargetCrewBidLamports,
+  fetchCrewMarketSnapshot,
+  STAR_ATLAS_CREW_TARGET_ID
+} from './tensor_market';
 
 const TENSOR_CNFT_PROGRAM_ID = new PublicKey('TCMPhJdwDryooaGtiocG1u3xcYbRpiJzb283XfCZsDp');
 const SYSTEM_PROGRAM_ID = new PublicKey('11111111111111111111111111111111');
@@ -99,6 +105,7 @@ type CrewMarketState = {
   bestCompetingBidQuantity: number | null;
   bestCompetingBidFilledQuantity: number | null;
   bestAskLamports: number | null;
+  royaltyFeeBps: number | null;
   targetBidLamports: number | null;
   ownBidQuantity: number | null;
   ownBidFilledQuantity: number | null;
@@ -239,6 +246,7 @@ export class CrewBidBot {
     bestCompetingBidQuantity: null,
     bestCompetingBidFilledQuantity: null,
     bestAskLamports: null,
+    royaltyFeeBps: null,
     targetBidLamports: null,
     ownBidQuantity: null,
     ownBidFilledQuantity: null,
@@ -413,6 +421,7 @@ export class CrewBidBot {
     this.state.bestCompetingBidQuantity = snapshot.bestCompetingBidQuantity;
     this.state.bestCompetingBidFilledQuantity = snapshot.bestCompetingBidFilledQuantity;
     this.state.bestAskLamports = snapshot.bestAskLamports;
+    this.state.royaltyFeeBps = snapshot.royaltyFeeBps;
     this.state.ownBidQuantity = snapshot.ownBidQuantity;
     this.state.ownBidFilledQuantity = snapshot.ownBidFilledQuantity;
     this.state.ownBidSolBalanceLamports = snapshot.ownBidSolBalanceLamports;
@@ -465,15 +474,21 @@ export class CrewBidBot {
       return null;
     }
 
+    const requiredLamports = this.computeTensorBidSpendLamports(priceLamports);
+
     if (this.state.ownBidSolBalanceLamports != null) {
-      return Math.max(0, Math.floor(this.state.ownBidSolBalanceLamports / priceLamports));
+      return Math.max(0, Math.floor(this.state.ownBidSolBalanceLamports / requiredLamports));
     }
 
     if (this.state.marginAccountSolBalance != null) {
-      return Math.max(0, Math.floor((this.state.marginAccountSolBalance * 1_000_000_000) / priceLamports));
+      return Math.max(0, Math.floor((this.state.marginAccountSolBalance * 1_000_000_000) / requiredLamports));
     }
 
     return null;
+  }
+
+  private computeTensorBidSpendLamports(limitBidLamports: number): number {
+    return applyTensorTakerFeesLamports(limitBidLamports, this.state.royaltyFeeBps);
   }
 
   private evaluateMarginAlerts() {
@@ -711,8 +726,9 @@ export class CrewBidBot {
     return signature;
   }
 
-  private async sendBidUpdate(amountLamports: number): Promise<void> {
+  private async sendBidUpdate(limitBidLamports: number): Promise<void> {
     const ownerPk = this.wallet.publicKey;
+    const amountLamports = this.computeTensorBidSpendLamports(limitBidLamports);
 
     const bidIdPk = publicKeyFromString(this.config.bidId, 'bidId');
     const targetIdPk = publicKeyFromString(this.config.targetId, 'targetId');
@@ -720,7 +736,7 @@ export class CrewBidBot {
     const makerBrokerPk = optionalPublicKeyFromString(this.config.makerBroker);
 
     this.logger.info(
-      `Sending Tensor bid update: amount=${amountLamports} quantity=${this.config.quantity}`
+      `Sending Tensor bid update: limit=${limitBidLamports} amount=${amountLamports} royaltyFeeBps=${this.state.royaltyFeeBps ?? 0} quantity=${this.config.quantity}`
     );
 
     const {
