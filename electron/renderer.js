@@ -30,6 +30,7 @@ const logsEl = document.getElementById('logs');
 const saveBtn = document.getElementById('save-btn');
 const startBtn = document.getElementById('start-btn');
 const stopBtn = document.getElementById('stop-btn');
+const mainActionFeedbackEl = document.getElementById('main-action-feedback');
 const toggleSensitiveBtn = document.getElementById('toggle-sensitive-btn');
 const tabButtons = Array.from(document.querySelectorAll('.tab-button'));
 const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
@@ -120,6 +121,16 @@ function writeFormConfig(config) {
 function appendLog(line) {
   logsEl.textContent += `${line}\n`;
   logsEl.scrollTop = logsEl.scrollHeight;
+}
+
+function setMainActionFeedback(message, tone = 'info') {
+  if (!mainActionFeedbackEl) {
+    return;
+  }
+
+  mainActionFeedbackEl.textContent = message || '';
+  mainActionFeedbackEl.classList.toggle('error', tone === 'error');
+  mainActionFeedbackEl.classList.toggle('success', tone === 'success');
 }
 
 function formatNumber(value, maximumFractionDigits = 6) {
@@ -527,32 +538,71 @@ async function boot() {
 }
 
 saveBtn.addEventListener('click', async () => {
-  const result = await window.botApi.saveSettings(readFormConfig());
-  writeFormConfig(result);
-  appendLog(`[${new Date().toISOString()}] [INFO] Settings saved`);
+  setMainActionFeedback('Saving settings...');
+  saveBtn.disabled = true;
 
-  const wasRunning = startBtn.disabled;
-  if (wasRunning) {
-    appendLog(`[${new Date().toISOString()}] [INFO] Applying settings immediately...`);
-    const result = await window.botApi.applySettingsNow();
-    if (!result?.ok) {
-      appendLog(`[${new Date().toISOString()}] [WARN] Live apply failed, restarting bot...`);
-      await window.botApi.stopBot();
-      await window.botApi.startBot();
+  try {
+    const result = await window.botApi.saveSettings(readFormConfig());
+    writeFormConfig(result);
+    appendLog(`[${new Date().toISOString()}] [INFO] Settings saved`);
+    setMainActionFeedback('Settings saved.', 'success');
+
+    const wasRunning = startBtn.disabled;
+    if (wasRunning) {
+      appendLog(`[${new Date().toISOString()}] [INFO] Applying settings immediately...`);
+      const applyResult = await window.botApi.applySettingsNow();
+      if (!applyResult?.ok) {
+        appendLog(`[${new Date().toISOString()}] [WARN] Live apply failed, restarting bot...`);
+        await window.botApi.stopBot();
+        const startResult = await window.botApi.startBot();
+        if (!startResult?.ok) {
+          throw new Error(startResult?.message || 'Bot restart failed');
+        }
+      }
+      await refreshBotStatus();
     }
-    await refreshBotStatus();
+  } catch (err) {
+    const message = err?.message || String(err);
+    setMainActionFeedback(message, 'error');
+    appendLog(`[${new Date().toISOString()}] [ERROR] ${message}`);
+  } finally {
+    saveBtn.disabled = false;
   }
 });
 
 startBtn.addEventListener('click', async () => {
-  await window.botApi.saveSettings(readFormConfig());
-  await window.botApi.startBot();
-  await refreshBotStatus();
+  setMainActionFeedback('Starting bot...');
+  startBtn.disabled = true;
+
+  try {
+    await window.botApi.saveSettings(readFormConfig());
+    const result = await window.botApi.startBot();
+    if (!result?.ok) {
+      throw new Error(result?.message || 'Bot failed to start');
+    }
+    await refreshBotStatus();
+    setMainActionFeedback('Bot started.', 'success');
+  } catch (err) {
+    const message = err?.message || String(err);
+    setRunning(false);
+    setMainActionFeedback(message, 'error');
+    appendLog(`[${new Date().toISOString()}] [ERROR] Start bot failed: ${message}`);
+  }
 });
 
 stopBtn.addEventListener('click', async () => {
-  await window.botApi.stopBot();
-  await refreshBotStatus();
+  setMainActionFeedback('Stopping bot...');
+  stopBtn.disabled = true;
+
+  try {
+    await window.botApi.stopBot();
+    await refreshBotStatus();
+    setMainActionFeedback('Bot stopped.', 'success');
+  } catch (err) {
+    const message = err?.message || String(err);
+    setMainActionFeedback(message, 'error');
+    appendLog(`[${new Date().toISOString()}] [ERROR] Stop bot failed: ${message}`);
+  }
 });
 
 toggleSensitiveBtn.addEventListener('click', () => {

@@ -328,8 +328,23 @@ ipcMain.handle('settings:save', async (_event, payload) => {
 });
 
 ipcMain.handle('bot:start', async () => {
-  await startBotFromSettings();
-  return { running: botRunning };
+  try {
+    await startBotFromSettings();
+    return { ok: true, running: botRunning };
+  } catch (err) {
+    logger.error('Start bot failed:', err);
+    botRunning = false;
+    bot = null;
+    broadcast('bot-status', {
+      running: false,
+      status: null
+    });
+    return {
+      ok: false,
+      running: false,
+      message: err?.message || String(err)
+    };
+  }
 });
 
 ipcMain.handle('bot:stop', async () => {
