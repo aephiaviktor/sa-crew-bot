@@ -513,6 +513,51 @@ h3 {
   gap: 10px;
 }
 
+.limit-order-form {
+  display: block;
+}
+
+.limit-orders-table-scroll {
+  overflow-x: auto;
+  border: 1px solid rgba(143, 193, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(4, 16, 34, 0.18);
+}
+
+.limit-orders-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.limit-orders-table th,
+.limit-orders-table td {
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.limit-orders-table th {
+  font-size: 13px;
+  font-weight: 650;
+  color: #d6ebff;
+  background: rgba(10, 30, 60, 0.98);
+  border-bottom: 1px solid rgba(143, 193, 255, 0.22);
+}
+
+.limit-orders-table td {
+  border-bottom: 1px solid rgba(143, 193, 255, 0.12);
+}
+
+.limit-orders-table tr:last-child td {
+  border-bottom: none;
+}
+
+.limit-orders-table select,
+.limit-orders-table input {
+  width: 100%;
+}
+
 .setup-accounts-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

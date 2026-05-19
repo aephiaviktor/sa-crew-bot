@@ -27,25 +27,35 @@
 
             <section class="tab-panel active" data-panel="main" role="tabpanel" aria-labelledby="tab-main">
               <section class="subpanel">
-                <h2>Trading</h2>
-                <form id="main-form" class="config-grid">
-                  <label>
-                    Side
-                    <select name="SIDE">
-                      <option value="buy">buy</option>
-                      <option value="sell">sell</option>
-                    </select>
-                  </label>
-
-                  <label>
-                    Quantity
-                    <input name="QUANTITY" type="number" />
-                  </label>
-
-                  <label>
-                    Max Bid SOL
-                    <input name="MAX_BID_SOL" type="text" />
-                  </label>
+                <h2>Limit Orders</h2>
+                <form id="main-form" class="limit-order-form">
+                  <div class="limit-orders-table-scroll">
+                    <table class="limit-orders-table">
+                      <thead>
+                        <tr>
+                          <th>Side</th>
+                          <th>Quantity</th>
+                          <th>Price (SOL)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>
+                            <select name="SIDE">
+                              <option value="buy">buy</option>
+                              <option value="sell">sell</option>
+                            </select>
+                          </td>
+                          <td>
+                            <input name="QUANTITY" type="number" />
+                          </td>
+                          <td>
+                            <input name="MAX_BID_SOL" type="text" />
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </form>
 
                 <div class="actions">
@@ -246,7 +256,7 @@
         <h2 id="update-dialog-title">SA Crew Bot Update</h2>
         <div class="update-version-grid">
           <span>Current version</span>
-          <strong id="update-current-version">v0.1.12</strong>
+          <strong id="update-current-version">v0.1.13</strong>
           <span>Latest GitHub version</span>
           <strong id="update-latest-version">Checking...</strong>
         </div>
