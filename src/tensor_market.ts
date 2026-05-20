@@ -246,44 +246,6 @@ fragment ReducedTCompBid on TCompBid {
   __typename
 }`;
 
-const TCOMP_BID_TX_QUERY = `query TcompBidTx(
-  $quantity: Float!
-  $price: Decimal!
-  $owner: String!
-  $slug: String
-  $marginNr: Float
-  $attributes: [AttributeInput!]
-  $priorityMicroLamports: Int!
-  $blockhash: String
-) {
-  tcompBidTx(
-    quantity: $quantity
-    price: $price
-    owner: $owner
-    slug: $slug
-    marginNr: $marginNr
-    attributes: $attributes
-    priorityMicroLamports: $priorityMicroLamports
-    blockhash: $blockhash
-  ) {
-    txs {
-      tx
-      txV0
-      lastValidBlockHeight
-      metadata
-    }
-  }
-}`;
-
-const TSWAP_MARGIN_ACCOUNTS_QUERY = `query TswapMarginAccounts($owner: String!) {
-  tswapMarginAccounts(owner: $owner) {
-    address
-    nr
-    name
-    balance
-  }
-}`;
-
 export type TensorListingPrice = {
   owner: string;
   price: string;
@@ -332,6 +294,8 @@ export type CrewMarketSnapshot = {
   ownBidSolBalanceLamports: number | null;
   ownBidMarginNr: number | null;
   ownBidMargin: string | null;
+  ownBidAttributes: CrewAttributeFilter[];
+  activeAttributes: CrewAttributeFilter[];
   royaltyFeeBps: number | null;
   listings: TensorListingPrice[];
   genericCollectionBids: TensorTcompBid[];
@@ -341,24 +305,6 @@ export type CrewMarketSnapshot = {
 export type CrewAttributeFilter = {
   trait_type: string;
   value: string;
-};
-
-export type TensorMarginAccount = {
-  address: string;
-  nr: number;
-  name: string | null;
-  balance: string | null;
-};
-
-export type TensorTxResponse = {
-  tx?: { type?: string; data?: number[] } | number[] | string | null;
-  txV0?: { type?: string; data?: number[] } | number[] | string | null;
-  lastValidBlockHeight?: number | null;
-  metadata?: unknown;
-};
-
-export type TensorTcompBidTxResult = {
-  txs: TensorTxResponse[];
 };
 
 async function tensorPost<T>(body: unknown): Promise<T> {
@@ -454,6 +400,24 @@ export function attributesIncludeAll(
   );
 }
 
+function cleanAttributes(attributes: Array<{ trait_type: string; value: string }> | null | undefined): CrewAttributeFilter[] {
+  return (Array.isArray(attributes) ? attributes : [])
+    .map((attribute) => ({
+      trait_type: String(attribute.trait_type || '').trim(),
+      value: String(attribute.value || '').trim()
+    }))
+    .filter((attribute) => attribute.trait_type && attribute.value);
+}
+
+export function formatAttributesLabel(attributes: CrewAttributeFilter[]): string {
+  const cleaned = cleanAttributes(attributes);
+  if (!cleaned.length) {
+    return 'Floor';
+  }
+
+  return cleaned.map((attribute) => `${attribute.trait_type}: ${attribute.value}`).join(', ');
+}
+
 export async function fetchCrewTcompBids(slugUuid = STAR_ATLAS_CREW_COLLECTION_UUID, owner?: string | null): Promise<TensorTcompBid[]> {
   const json = await tensorPost<
     Array<{
@@ -524,13 +488,26 @@ export async function fetchCrewMarketSnapshot(params: {
   targetId?: string;
   minRelevantBidQuantity?: number;
   whitelistOwners?: string[];
-  attributes?: CrewAttributeFilter[];
 }): Promise<CrewMarketSnapshot> {
   const slugUuid = params.slugUuid ?? STAR_ATLAS_CREW_COLLECTION_UUID;
   const targetId = params.targetId ?? STAR_ATLAS_CREW_TARGET_ID;
-  const attributes = params.attributes ?? [];
   const [listingData, bids] = await Promise.all([fetchCrewListings(slugUuid), fetchCrewTcompBids(slugUuid, null)]);
   const whitelistOwners = new Set((params.whitelistOwners ?? []).map((owner) => owner.toLowerCase()));
+  const allCollectionBids = bids.filter(
+    (bid) => bid.target === 'WHITELIST' && bid.targetId === targetId && bid.field == null && bid.fieldId == null
+  );
+  const ownBidCandidates = allCollectionBids.filter(
+    (bid) =>
+      bid.ownerAddress === params.ownerAddress ||
+      (params.ownBidState != null && bid.address === params.ownBidState)
+  );
+  const detectedOwnBid =
+    (params.ownBidState
+      ? ownBidCandidates.find((bid) => bid.address === params.ownBidState)
+      : null) ??
+    ownBidCandidates.find((bid) => bid.quantity > 0) ??
+    (ownBidCandidates.length ? ownBidCandidates[0] : null);
+  const attributes = cleanAttributes(detectedOwnBid?.attributes);
 
   const listings = [...listingData.prices]
     .filter((listing) => attributesIncludeAll(listing.tx?.mint?.attributes, attributes))
@@ -580,64 +557,13 @@ export async function fetchCrewMarketSnapshot(params: {
     ownBidSolBalanceLamports: ownTopBid?.solBalance != null ? toLamports(ownTopBid.solBalance) : null,
     ownBidMarginNr: ownTopBid?.marginNr ?? null,
     ownBidMargin: ownTopBid?.margin ?? null,
+    ownBidAttributes: cleanAttributes(ownTopBid?.attributes),
+    activeAttributes: attributes,
     royaltyFeeBps: listingData.royaltyFeeBps,
     listings,
     genericCollectionBids,
     ownBids
   };
-}
-
-export async function fetchTensorMarginAccounts(ownerAddress: string): Promise<TensorMarginAccount[]> {
-  const json = await tensorPost<{
-    data?: {
-      tswapMarginAccounts?: TensorMarginAccount[];
-    };
-  }>({
-    operationName: 'TswapMarginAccounts',
-    variables: {
-      owner: ownerAddress
-    },
-    query: TSWAP_MARGIN_ACCOUNTS_QUERY
-  });
-
-  return json?.data?.tswapMarginAccounts ?? [];
-}
-
-export async function buildTensorTcompBidTx(params: {
-  ownerAddress: string;
-  slugUuid: string;
-  priceLamports: number;
-  quantity: number;
-  marginNr: number;
-  attributes: CrewAttributeFilter[];
-  blockhash: string;
-  priorityMicroLamports?: number;
-}): Promise<TensorTcompBidTxResult> {
-  const json = await tensorPost<{
-    data?: {
-      tcompBidTx?: TensorTcompBidTxResult;
-    };
-  }>({
-    operationName: 'TcompBidTx',
-    variables: {
-      quantity: params.quantity,
-      price: String(params.priceLamports),
-      owner: params.ownerAddress,
-      slug: params.slugUuid,
-      marginNr: params.marginNr,
-      attributes: params.attributes,
-      priorityMicroLamports: params.priorityMicroLamports ?? 50_000,
-      blockhash: params.blockhash
-    },
-    query: TCOMP_BID_TX_QUERY
-  });
-
-  const result = json?.data?.tcompBidTx;
-  if (!result?.txs?.length) {
-    throw new Error('Tensor did not return a bid transaction');
-  }
-
-  return result;
 }
 
 export function computeTargetCrewBidLamports(input: {

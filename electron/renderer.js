@@ -1,7 +1,5 @@
 const mainFields = [
   'SIDE',
-  'SKILL',
-  'APTITUDE',
   'QUANTITY',
   'MAX_BID_SOL'
 ];
@@ -24,12 +22,6 @@ const setupFields = [
 
 const fields = [...mainFields, ...setupFields];
 const STATUS_POLL_MS = 60000;
-const APTITUDE_OPTIONS = [
-  { value: '', label: 'No aptitude - floor' },
-  { value: 'Minor', label: 'Minor' },
-  { value: 'Major', label: 'Major' },
-  { value: 'Anomalous', label: 'Anomalous' }
-];
 let appVersion = 'unknown';
 
 const mainForm = document.getElementById('main-form');
@@ -64,6 +56,7 @@ const mainRemoveRowBtn = document.getElementById('main-remove-row-btn');
 const addLimitOrderRowBtn = document.getElementById('add-limit-order-row-btn');
 const quantityHintEl = document.getElementById('quantity-hint');
 const priceHintEl = document.getElementById('price-hint');
+const mainOrderTraitsEl = document.getElementById('main-order-traits');
 const updateBtn = document.getElementById('update-btn');
 const updateModal = document.getElementById('update-modal');
 const updateCurrentVersionEl = document.getElementById('update-current-version');
@@ -111,29 +104,6 @@ function updateLimitOrderHints() {
   }
 }
 
-function updateAptitudeOptions() {
-  const skillField = mainForm.elements.namedItem('SKILL');
-  const aptitudeField = mainForm.elements.namedItem('APTITUDE');
-  if (!skillField || !aptitudeField) {
-    return;
-  }
-
-  const selectedSkill = String(skillField.value || '');
-  const previousAptitude = String(aptitudeField.value || '');
-  const allowedOptions = selectedSkill ? APTITUDE_OPTIONS.slice(1) : APTITUDE_OPTIONS.slice(0, 1);
-
-  aptitudeField.innerHTML = '';
-  for (const option of allowedOptions) {
-    const optionEl = document.createElement('option');
-    optionEl.value = option.value;
-    optionEl.textContent = option.label;
-    aptitudeField.appendChild(optionEl);
-  }
-
-  const hasPreviousValue = allowedOptions.some((option) => option.value === previousAptitude);
-  aptitudeField.value = hasPreviousValue ? previousAptitude : allowedOptions[0].value;
-}
-
 function setSensitiveVisible(visible) {
   sensitiveVisible = visible;
   form.classList.toggle('sensitive-hidden', !visible);
@@ -164,18 +134,11 @@ function readFormConfig() {
 function writeFormConfig(config) {
   for (const key of fields) {
     const element = mainForm.elements.namedItem(key) || form.elements.namedItem(key);
-    if (element && key !== 'APTITUDE') {
+    if (element) {
       element.value = config[key] ?? '';
     }
   }
   updateLimitOrderHints();
-  updateAptitudeOptions();
-
-  const aptitudeField = mainForm.elements.namedItem('APTITUDE');
-  const aptitudeValue = String(config.APTITUDE ?? '');
-  if (aptitudeField && Array.from(aptitudeField.options).some((option) => option.value === aptitudeValue)) {
-    aptitudeField.value = aptitudeValue;
-  }
 }
 
 function appendLog(line) {
@@ -505,6 +468,10 @@ function renderStatusSnapshot(status) {
   targetBidEl.textContent = formatLamportsToSol(status?.targetBidLamports);
   lastActionEl.textContent = status?.lastAction || '—';
   lastCheckAtEl.textContent = formatTimestamp(status?.lastCheckAt);
+  if (mainOrderTraitsEl) {
+    mainOrderTraitsEl.textContent = status?.currentOrderTraitsLabel || '—';
+    mainOrderTraitsEl.title = status?.currentOrderTraitsLabel || '';
+  }
 
   if (walletAddressEl) {
     walletAddressEl.textContent = shortenWallet(status?.wallet || '—');
@@ -695,7 +662,6 @@ toggleSensitiveBtn.addEventListener('click', () => {
 });
 
 mainForm.elements.namedItem('SIDE')?.addEventListener('change', updateLimitOrderHints);
-mainForm.elements.namedItem('SKILL')?.addEventListener('change', updateAptitudeOptions);
 
 async function cancelActiveBidFromUi(sourceButton) {
   if (sourceButton) {

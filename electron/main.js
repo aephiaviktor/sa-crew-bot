@@ -14,8 +14,6 @@ const DEFAULT_SETTINGS = {
   RPC_URL: 'https://api.mainnet-beta.solana.com',
   HOT_WALLET_SECRET: '',
   SIDE: 'buy',
-  SKILL: '',
-  APTITUDE: '',
   COLLECTION_SLUG_UUID: '42c0b80a-5945-4a18-84d3-467af9ccb9a2',
   TARGET_ID: '13oBYyDzdGJxMJPdzRjmCBALL5akjJkarK1C43SUt2Ep',
   MAKER_BROKER: 'DrFkK9QyDPDHHAgRi5jkAFkqeNDf4wkcyDtAv2CeL9tk',
@@ -39,23 +37,6 @@ const AEPHIA_TOKEN_VALIDATE_URL = 'https://api.aephia.com/token/validate';
 const APP_DISPLAY_NAME = 'SA Crew Bot';
 const APP_ROOT = path.join(__dirname, '..');
 const execFileAsync = promisify(execFile);
-const VALID_SKILLS = new Set(['', 'Command', 'Flight', 'Engineering', 'Medical', 'Science', 'Operator', 'Hospitality']);
-const VALID_APTITUDES = new Set(['Minor', 'Major', 'Anomalous']);
-
-function normalizeSettings(settings) {
-  const normalized = { ...settings };
-  if (!VALID_SKILLS.has(String(normalized.SKILL ?? ''))) {
-    normalized.SKILL = '';
-  }
-
-  if (!normalized.SKILL) {
-    normalized.APTITUDE = '';
-  } else if (!VALID_APTITUDES.has(String(normalized.APTITUDE ?? ''))) {
-    normalized.APTITUDE = 'Minor';
-  }
-
-  return normalized;
-}
 
 function shortCommit(value) {
   return String(value || '').trim().slice(0, 7) || 'unknown';
@@ -247,16 +228,16 @@ async function loadSettings() {
     const raw = await fs.readFile(settingsPath(), 'utf8');
     const settings = { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
     settings.MIN_RELEVANT_BID_QUANTITY ||= settings.QUANTITY;
-    return normalizeSettings(settings);
+    return settings;
   } catch {
     const settings = { ...DEFAULT_SETTINGS };
     settings.MIN_RELEVANT_BID_QUANTITY ||= settings.QUANTITY;
-    return normalizeSettings(settings);
+    return settings;
   }
 }
 
 async function saveSettings(payload) {
-  const merged = normalizeSettings({ ...(await loadSettings()), ...(payload || {}) });
+  const merged = { ...(await loadSettings()), ...(payload || {}) };
   await fs.mkdir(path.dirname(settingsPath()), { recursive: true });
   await fs.writeFile(settingsPath(), JSON.stringify(merged, null, 2), 'utf8');
   return merged;
@@ -316,7 +297,7 @@ async function startBotFromSettings() {
 
   broadcast('bot-status', {
     running: true,
-    status: bot.getStatus()
+    status: await bot.getStatus()
   });
 
   void bot.start().catch((err) => {
@@ -340,7 +321,7 @@ async function stopBot() {
 
   broadcast('bot-status', {
     running: false,
-    status: bot ? bot.getStatus() : null
+    status: bot ? await bot.getStatus() : null
   });
 
   bot = null;
@@ -404,7 +385,7 @@ ipcMain.handle('bot:apply-settings-now', async () => {
   bot.applyConfigUpdates(nextConfig);
   await bot.runImmediateCycle();
 
-  const status = bot.getStatus();
+  const status = await bot.getStatus();
   await persistBidIdentityFromStatus(status);
   broadcast('bot-status', { running: true, status });
 
@@ -424,6 +405,7 @@ ipcMain.handle('bot:get-status', async () => {
       competingBidLamports: [],
       bestAskLamports: null,
       targetBidLamports: null,
+      currentOrderTraitsLabel: '—',
       lastCheckAt: null,
       lastAction: null,
       lastUpdatedAt: null,
@@ -439,7 +421,7 @@ ipcMain.handle('bot:get-status', async () => {
     };
   }
 
-  const status = bot.getStatus();
+  const status = await bot.getStatus();
   await persistBidIdentityFromStatus(status);
   return status;
 });
@@ -454,7 +436,7 @@ ipcMain.handle('bot:cancel-bid', async () => {
 
   try {
     const changed = await bot.cancelBidNow();
-    const status = bot.getStatus();
+    const status = await bot.getStatus();
 
     broadcast('bot-status', {
       running: botRunning,

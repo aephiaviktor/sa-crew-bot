@@ -577,6 +577,18 @@ h3 {
   color: #9fc8ea;
 }
 
+.trait-display {
+  display: inline-flex;
+  align-items: center;
+  min-width: 130px;
+  min-height: 36px;
+  max-width: 220px;
+  color: #d6ebff;
+  font-size: 12px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
 .remove-cell {
   width: 1%;
   white-space: nowrap;

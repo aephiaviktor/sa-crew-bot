@@ -34,10 +34,9 @@
                       <thead>
                         <tr>
                           <th>Side</th>
-                          <th>Skill</th>
-                          <th>Aptitude</th>
                           <th>Quantity</th>
                           <th>Price (SOL)</th>
+                          <th>Traits</th>
                           <th></th>
                         </tr>
                       </thead>
@@ -47,23 +46,6 @@
                             <select name="SIDE">
                               <option value="buy">buy</option>
                               <option value="sell">sell</option>
-                            </select>
-                          </td>
-                          <td>
-                            <select name="SKILL">
-                              <option value="">No skill - floor</option>
-                              <option value="Command">Command</option>
-                              <option value="Flight">Flight</option>
-                              <option value="Engineering">Engineering</option>
-                              <option value="Medical">Medical</option>
-                              <option value="Science">Science</option>
-                              <option value="Operator">Operator</option>
-                              <option value="Hospitality">Hospitality</option>
-                            </select>
-                          </td>
-                          <td>
-                            <select name="APTITUDE">
-                              <option value="">No aptitude - floor</option>
                             </select>
                           </td>
                           <td>
@@ -78,6 +60,9 @@
                               <span class="cell-hint" id="price-hint">Max price</span>
                             </div>
                           </td>
+                          <td>
+                            <span class="trait-display" id="main-order-traits">—</span>
+                          </td>
                           <td class="remove-cell">
                             <div class="cell-stack">
                               <button id="main-cancel-order-btn" class="cancel-order-btn" type="button">Cancel Order</button>
@@ -88,7 +73,7 @@
                       </tbody>
                       <tfoot>
                         <tr>
-                          <td colspan="5"></td>
+                          <td colspan="4"></td>
                           <td class="remove-cell add-row-cell">
                             <button id="add-limit-order-row-btn" type="button">+ Add Row</button>
                           </td>
