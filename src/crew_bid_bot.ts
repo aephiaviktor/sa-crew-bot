@@ -19,6 +19,7 @@ const RECENT_ACTIVITY_LIMIT = 8;
 const CHECK_INTERVAL_MINUTES_TIERS = [5, 10, 20, 30, 60] as const;
 
 export type CrewBidBotConfig = {
+  rowId: string;
   rpcUrl: string;
   hotWalletSecret: string;
 
@@ -47,6 +48,7 @@ export type CrewBidBotLogger = {
 };
 
 export type CrewBidBotOpenOrder = {
+  rowId: string;
   label: string;
   side: 'buy' | 'sell';
   priceLamports: number | null;
@@ -67,6 +69,7 @@ export type CrewBidBotActivity = {
 };
 
 export type CrewBidBotStatus = {
+  rowId: string;
   running: boolean;
   wallet: string;
   bidState: string;
@@ -310,6 +313,7 @@ export class CrewBidBot {
     }
 
     return {
+      rowId: this.config.rowId,
       running: this.running,
       wallet: this.wallet.publicKey.toBase58(),
       bidState: this.config.bidState,
@@ -612,6 +616,7 @@ export class CrewBidBot {
 
     return [
       {
+        rowId: this.config.rowId,
         label: 'Star Atlas Crew',
         side: this.config.side,
         priceLamports: this.state.currentBidLamports,

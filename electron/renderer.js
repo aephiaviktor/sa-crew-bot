@@ -628,13 +628,24 @@ function renderStatusSnapshot(status) {
 
   const incomingOpenOrders = Array.isArray(status?.openOrders) ? status.openOrders : [];
   const incomingRecentActivity = Array.isArray(status?.recentActivity) ? status.recentActivity : [];
+  const rowStatusesById = new Map(
+    (Array.isArray(status?.rowStatuses) ? status.rowStatuses : [])
+      .filter((order) => order?.rowId)
+      .map((order) => [String(order.rowId), order])
+  );
+  const openOrdersByRowId = new Map(
+    incomingOpenOrders
+      .filter((order) => order?.rowId)
+      .map((order) => [String(order.rowId), order])
+  );
   for (const [index, rowEl] of Array.from(limitOrdersBodyEl?.querySelectorAll('tr[data-row-id]') || []).entries()) {
-    const order = incomingOpenOrders[index];
+    const rowId = rowEl.dataset.rowId;
+    const order = openOrdersByRowId.get(rowId) || rowStatusesById.get(rowId) || (!rowId ? incomingOpenOrders[index] : null);
     const traitsEl = rowEl.querySelector('[data-field="traitsLabel"]');
     const bidStateEl = rowEl.querySelector('[data-field="bidState"]');
     const bidIdEl = rowEl.querySelector('[data-field="bidId"]');
     if (traitsEl) {
-      traitsEl.textContent = order?.traitsLabel || (index === 0 ? status?.currentOrderTraitsLabel : '') || '—';
+      traitsEl.textContent = order?.traitsLabel || '—';
       traitsEl.title = traitsEl.textContent;
     }
     if (bidStateEl && order?.bidState) {

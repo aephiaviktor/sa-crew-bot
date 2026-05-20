@@ -313,6 +313,7 @@ function makeBotConfig(s, row) {
   const minRelevantBidQuantity = Number(s.MIN_RELEVANT_BID_QUANTITY);
 
   return {
+    rowId: order.id,
     rpcUrl: s.RPC_URL,
     hotWalletSecret: s.HOT_WALLET_SECRET,
     side: order.side === 'sell' ? 'sell' : 'buy',
@@ -336,6 +337,7 @@ function makeBotConfig(s, row) {
 function emptyStatus() {
   return {
     running: false,
+    rowStatuses: [],
     wallet: null,
     bidState: null,
     bidId: null,
@@ -378,6 +380,12 @@ async function getCombinedBotStatus() {
   return {
     ...first,
     running: botRunning,
+    rowStatuses: statuses.map(({ entry, status }) => ({
+      rowId: entry.row.id,
+      bidState: status.bidState || entry.row.bidState || null,
+      bidId: status.bidId || entry.row.bidId || null,
+      traitsLabel: status.currentOrderTraitsLabel || '—'
+    })),
     openOrders: statuses.flatMap(({ status }) => status.openOrders || []),
     recentActivity: statuses
       .flatMap(({ status, entry }) =>
