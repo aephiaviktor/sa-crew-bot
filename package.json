@@ -1,6 +1,6 @@
 {
   "name": "sa-crew-bot",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "private": true,
   "main": "electron/main.js",
   "type": "commonjs",
