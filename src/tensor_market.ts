@@ -26,6 +26,11 @@ fragment ReducedActiveListingPrice on ActiveListingPrice {
       name
       imageUri
       sellRoyaltyFeeBPS
+      attributes {
+        trait_type
+        value
+        __typename
+      }
       ...MintRarityFields
       __typename
     }
@@ -241,6 +246,44 @@ fragment ReducedTCompBid on TCompBid {
   __typename
 }`;
 
+const TCOMP_BID_TX_QUERY = `query TcompBidTx(
+  $quantity: Float!
+  $price: Decimal!
+  $owner: String!
+  $slug: String
+  $marginNr: Float
+  $attributes: [AttributeInput!]
+  $priorityMicroLamports: Int!
+  $blockhash: String
+) {
+  tcompBidTx(
+    quantity: $quantity
+    price: $price
+    owner: $owner
+    slug: $slug
+    marginNr: $marginNr
+    attributes: $attributes
+    priorityMicroLamports: $priorityMicroLamports
+    blockhash: $blockhash
+  ) {
+    txs {
+      tx
+      txV0
+      lastValidBlockHeight
+      metadata
+    }
+  }
+}`;
+
+const TSWAP_MARGIN_ACCOUNTS_QUERY = `query TswapMarginAccounts($owner: String!) {
+  tswapMarginAccounts(owner: $owner) {
+    address
+    nr
+    name
+    balance
+  }
+}`;
+
 export type TensorListingPrice = {
   owner: string;
   price: string;
@@ -252,6 +295,7 @@ export type TensorListingPrice = {
       name?: string;
       imageUri?: string;
       sellRoyaltyFeeBPS?: number;
+      attributes?: Array<{ trait_type: string; value: string }> | null;
     };
   };
 };
@@ -292,6 +336,29 @@ export type CrewMarketSnapshot = {
   listings: TensorListingPrice[];
   genericCollectionBids: TensorTcompBid[];
   ownBids: TensorTcompBid[];
+};
+
+export type CrewAttributeFilter = {
+  trait_type: string;
+  value: string;
+};
+
+export type TensorMarginAccount = {
+  address: string;
+  nr: number;
+  name: string | null;
+  balance: string | null;
+};
+
+export type TensorTxResponse = {
+  tx?: { type?: string; data?: number[] } | number[] | string | null;
+  txV0?: { type?: string; data?: number[] } | number[] | string | null;
+  lastValidBlockHeight?: number | null;
+  metadata?: unknown;
+};
+
+export type TensorTcompBidTxResult = {
+  txs: TensorTxResponse[];
 };
 
 async function tensorPost<T>(body: unknown): Promise<T> {
@@ -343,6 +410,50 @@ export async function fetchCrewListings(slugUuid = STAR_ATLAS_CREW_COLLECTION_UU
   return { prices, royaltyFeeBps };
 }
 
+function normalizeAttributeValue(value: string): string {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeAttributeKey(value: string): string {
+  return String(value || '').trim().toLowerCase();
+}
+
+export function attributesExactlyMatch(
+  actual: Array<{ trait_type: string; value: string }> | null | undefined,
+  expected: CrewAttributeFilter[]
+): boolean {
+  const actualList = Array.isArray(actual) ? actual : [];
+  if (actualList.length !== expected.length) {
+    return false;
+  }
+
+  return expected.every((expectedAttribute) =>
+    actualList.some(
+      (actualAttribute) =>
+        normalizeAttributeKey(actualAttribute.trait_type) === normalizeAttributeKey(expectedAttribute.trait_type) &&
+        normalizeAttributeValue(actualAttribute.value) === normalizeAttributeValue(expectedAttribute.value)
+    )
+  );
+}
+
+export function attributesIncludeAll(
+  actual: Array<{ trait_type: string; value: string }> | null | undefined,
+  expected: CrewAttributeFilter[]
+): boolean {
+  if (!expected.length) {
+    return true;
+  }
+
+  const actualList = Array.isArray(actual) ? actual : [];
+  return expected.every((expectedAttribute) =>
+    actualList.some(
+      (actualAttribute) =>
+        normalizeAttributeKey(actualAttribute.trait_type) === normalizeAttributeKey(expectedAttribute.trait_type) &&
+        normalizeAttributeValue(actualAttribute.value) === normalizeAttributeValue(expectedAttribute.value)
+    )
+  );
+}
+
 export async function fetchCrewTcompBids(slugUuid = STAR_ATLAS_CREW_COLLECTION_UUID, owner?: string | null): Promise<TensorTcompBid[]> {
   const json = await tensorPost<
     Array<{
@@ -374,6 +485,20 @@ export function isGenericCrewCollectionBid(bid: TensorTcompBid, targetId = STAR_
   );
 }
 
+export function isMatchingCrewCollectionBid(
+  bid: TensorTcompBid,
+  targetId = STAR_ATLAS_CREW_TARGET_ID,
+  attributes: CrewAttributeFilter[] = []
+): boolean {
+  return (
+    bid.target === 'WHITELIST' &&
+    bid.targetId === targetId &&
+    bid.field == null &&
+    bid.fieldId == null &&
+    attributesExactlyMatch(bid.attributes, attributes)
+  );
+}
+
 export function toLamports(value: string | number | null | undefined): number {
   const parsed = typeof value === 'number' ? value : Number(value ?? 0);
   return Number.isFinite(parsed) ? Math.round(parsed) : 0;
@@ -399,20 +524,23 @@ export async function fetchCrewMarketSnapshot(params: {
   targetId?: string;
   minRelevantBidQuantity?: number;
   whitelistOwners?: string[];
+  attributes?: CrewAttributeFilter[];
 }): Promise<CrewMarketSnapshot> {
   const slugUuid = params.slugUuid ?? STAR_ATLAS_CREW_COLLECTION_UUID;
   const targetId = params.targetId ?? STAR_ATLAS_CREW_TARGET_ID;
+  const attributes = params.attributes ?? [];
   const [listingData, bids] = await Promise.all([fetchCrewListings(slugUuid), fetchCrewTcompBids(slugUuid, null)]);
   const whitelistOwners = new Set((params.whitelistOwners ?? []).map((owner) => owner.toLowerCase()));
 
   const listings = [...listingData.prices]
+    .filter((listing) => attributesIncludeAll(listing.tx?.mint?.attributes, attributes))
     .filter((listing) => !whitelistOwners.has(String(listing.owner ?? '').toLowerCase()))
     .sort(sortListingsAscByPrice);
   const bestAskLamports = listings.length
     ? applyTensorTakerFeesLamports(toLamports(listings[0].price), listingData.royaltyFeeBps)
     : null;
 
-  const genericCollectionBids = bids.filter((bid) => isGenericCrewCollectionBid(bid, targetId)).sort(sortBidsDescByAmount);
+  const genericCollectionBids = bids.filter((bid) => isMatchingCrewCollectionBid(bid, targetId, attributes)).sort(sortBidsDescByAmount);
   const minRelevantBidQuantity = Math.max(1, params.minRelevantBidQuantity ?? 1);
 
   const ownBids = genericCollectionBids.filter(
@@ -457,6 +585,59 @@ export async function fetchCrewMarketSnapshot(params: {
     genericCollectionBids,
     ownBids
   };
+}
+
+export async function fetchTensorMarginAccounts(ownerAddress: string): Promise<TensorMarginAccount[]> {
+  const json = await tensorPost<{
+    data?: {
+      tswapMarginAccounts?: TensorMarginAccount[];
+    };
+  }>({
+    operationName: 'TswapMarginAccounts',
+    variables: {
+      owner: ownerAddress
+    },
+    query: TSWAP_MARGIN_ACCOUNTS_QUERY
+  });
+
+  return json?.data?.tswapMarginAccounts ?? [];
+}
+
+export async function buildTensorTcompBidTx(params: {
+  ownerAddress: string;
+  slugUuid: string;
+  priceLamports: number;
+  quantity: number;
+  marginNr: number;
+  attributes: CrewAttributeFilter[];
+  blockhash: string;
+  priorityMicroLamports?: number;
+}): Promise<TensorTcompBidTxResult> {
+  const json = await tensorPost<{
+    data?: {
+      tcompBidTx?: TensorTcompBidTxResult;
+    };
+  }>({
+    operationName: 'TcompBidTx',
+    variables: {
+      quantity: params.quantity,
+      price: String(params.priceLamports),
+      owner: params.ownerAddress,
+      slug: params.slugUuid,
+      marginNr: params.marginNr,
+      attributes: params.attributes,
+      priorityMicroLamports: params.priorityMicroLamports ?? 50_000,
+      blockhash: params.blockhash
+    },
+    query: TCOMP_BID_TX_QUERY
+  });
+
+  const result = json?.data?.tcompBidTx;
+  if (!result?.txs?.length) {
+    throw new Error('Tensor did not return a bid transaction');
+  }
+
+  return result;
 }
 
 export function computeTargetCrewBidLamports(input: {

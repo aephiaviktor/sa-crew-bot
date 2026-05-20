@@ -287,6 +287,8 @@ function makeBotConfig(s) {
     rpcUrl: s.RPC_URL,
     hotWalletSecret: s.HOT_WALLET_SECRET,
     side: s.SIDE === 'sell' ? 'sell' : 'buy',
+    skill: s.SKILL,
+    aptitude: s.APTITUDE,
     collectionSlugUuid: s.COLLECTION_SLUG_UUID,
     targetId: s.TARGET_ID,
     makerBroker: s.MAKER_BROKER,

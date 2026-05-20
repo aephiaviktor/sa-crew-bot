@@ -5,11 +5,15 @@ import BN from 'bn.js';
 import { Connection, Keypair, PublicKey, Transaction, TransactionInstruction, Signer } from '@solana/web3.js';
 import { TCompSDK, Target } from '@tensor-oss/tcomp-sdk';
 import {
+  buildTensorTcompBidTx,
+  type CrewAttributeFilter,
   type CrewMarketSnapshot,
   applyTensorTakerFeesLamports,
   computeTargetCrewBidLamports,
+  fetchTensorMarginAccounts,
   fetchCrewMarketSnapshot,
-  STAR_ATLAS_CREW_TARGET_ID
+  STAR_ATLAS_CREW_TARGET_ID,
+  type TensorTxResponse
 } from './tensor_market';
 
 const TENSOR_CNFT_PROGRAM_ID = new PublicKey('TCMPhJdwDryooaGtiocG1u3xcYbRpiJzb283XfCZsDp');
@@ -22,6 +26,8 @@ export type CrewBidBotConfig = {
   hotWalletSecret: string;
 
   side: 'buy' | 'sell';
+  skill: string;
+  aptitude: string;
   collectionSlugUuid: string;
   targetId: string;
   makerBroker: string;
@@ -163,6 +169,41 @@ function publicKeyFromString(value: string, label: string): PublicKey {
 function optionalPublicKeyFromString(value: string | null | undefined): PublicKey | null {
   const trimmed = String(value ?? '').trim();
   return trimmed ? new PublicKey(trimmed) : null;
+}
+
+function normalizeCrewAptitude(value: string): string {
+  return String(value || '').trim().toLowerCase();
+}
+
+function buildCrewAttributeFilter(config: Pick<CrewBidBotConfig, 'skill' | 'aptitude'>): CrewAttributeFilter[] {
+  const skill = String(config.skill || '').trim();
+  const aptitude = normalizeCrewAptitude(config.aptitude);
+
+  if (!skill || !aptitude) {
+    return [];
+  }
+
+  return [
+    {
+      trait_type: skill,
+      value: aptitude
+    }
+  ];
+}
+
+function tensorTxBuffer(tx: TensorTxResponse): Buffer {
+  const source = tx.tx;
+  if (typeof source === 'string') {
+    return Buffer.from(source, 'base64');
+  }
+  if (Array.isArray(source)) {
+    return Buffer.from(source);
+  }
+  if (source && Array.isArray(source.data)) {
+    return Buffer.from(source.data);
+  }
+
+  throw new Error('Tensor returned an unsupported transaction payload');
 }
 
 function sameLamports(a: number | null, b: number | null): boolean {
@@ -404,7 +445,8 @@ export class CrewBidBot {
         ownBidState: this.config.bidState,
         slugUuid: this.config.collectionSlugUuid,
         targetId: this.config.targetId,
-        minRelevantBidQuantity: this.config.minRelevantBidQuantity
+        minRelevantBidQuantity: this.config.minRelevantBidQuantity,
+        attributes: buildCrewAttributeFilter(this.config)
       }),
       this.getSolBalance(),
       this.connection.getBalance(marginAccountPk, 'confirmed').catch(() => 0)
@@ -605,7 +647,9 @@ export class CrewBidBot {
 
     return [
       {
-        label: 'Star Atlas Crew',
+        label: buildCrewAttributeFilter(this.config).length
+          ? `Star Atlas Crew - ${this.config.skill} ${this.config.aptitude}`
+          : 'Star Atlas Crew',
         side: this.config.side,
         priceLamports: this.state.currentBidLamports,
         quantity,
@@ -724,17 +768,94 @@ export class CrewBidBot {
     return signature;
   }
 
+  private async signAndSendTensorTransaction(txResponse: TensorTxResponse): Promise<string> {
+    const tx = Transaction.from(tensorTxBuffer(txResponse));
+    const expectedSigner = this.wallet.publicKey.toBase58();
+    const hasWalletSignatureSlot = tx.signatures.some((signature) => signature.publicKey.toBase58() === expectedSigner);
+
+    if (!hasWalletSignatureSlot) {
+      throw new Error('Tensor transaction does not include the configured wallet as a signer');
+    }
+
+    tx.partialSign(this.wallet);
+
+    const signature = await this.connection.sendRawTransaction(tx.serialize());
+    const latestBlockhash = await this.connection.getLatestBlockhash('confirmed');
+    await this.connection.confirmTransaction(
+      {
+        signature,
+        blockhash: tx.recentBlockhash || latestBlockhash.blockhash,
+        lastValidBlockHeight: txResponse.lastValidBlockHeight ?? latestBlockhash.lastValidBlockHeight
+      },
+      'confirmed'
+    );
+
+    return signature;
+  }
+
+  private extractTensorBidState(txResponse: TensorTxResponse): PublicKey {
+    const tx = Transaction.from(tensorTxBuffer(txResponse));
+    const bidIx = tx.instructions.find((ix) => ix.programId.equals(TENSOR_CNFT_PROGRAM_ID));
+    const bidState = bidIx?.keys[2]?.pubkey;
+    if (!bidState) {
+      throw new Error('Could not identify Tensor bid state from returned transaction');
+    }
+    return bidState;
+  }
+
+  private async resolveConfiguredMarginNr(): Promise<number> {
+    const marginAccounts = await fetchTensorMarginAccounts(this.wallet.publicKey.toBase58());
+    const configuredMargin = this.config.marginAccount.trim();
+    const match = marginAccounts.find((account) => account.address === configuredMargin);
+
+    if (!match || typeof match.nr !== 'number') {
+      throw new Error(`Configured margin account ${configuredMargin} was not found in Tensor margin accounts`);
+    }
+
+    return match.nr;
+  }
+
   private async sendBidUpdate(limitBidLamports: number): Promise<void> {
     const ownerPk = this.wallet.publicKey;
+    const attributes = buildCrewAttributeFilter(this.config);
+
+    this.logger.info(
+      `Sending Tensor bid update: amount=${limitBidLamports} estimatedFillSpend=${this.computeEstimatedFillSpendLamports(limitBidLamports)} royaltyFeeBps=${this.state.royaltyFeeBps ?? 0} quantity=${this.config.quantity} attributes=${attributes.length ? JSON.stringify(attributes) : 'floor'}`
+    );
+
+    if (attributes.length > 0) {
+      await this.closeOldBidBestEffort('replacing with attribute bid');
+
+      const latestBlockhash = await this.connection.getLatestBlockhash('confirmed');
+      const marginNr = await this.resolveConfiguredMarginNr();
+      const result = await buildTensorTcompBidTx({
+        ownerAddress: ownerPk.toBase58(),
+        slugUuid: this.config.collectionSlugUuid,
+        priceLamports: limitBidLamports,
+        quantity: this.config.quantity,
+        marginNr,
+        attributes,
+        blockhash: latestBlockhash.blockhash
+      });
+
+      const bidState = this.extractTensorBidState(result.txs[0]);
+      let lastSig = '';
+      for (const tx of result.txs) {
+        lastSig = await this.signAndSendTensorTransaction(tx);
+      }
+
+      const bidAccount = await this.tcompSdk.fetchBidState(bidState);
+      this.config.bidState = bidState.toBase58();
+      this.config.bidId = bidAccount.bidId.toBase58();
+      this.state.ownBidAddress = this.config.bidState;
+      this.logger.info(`Tensor attribute bid update confirmed: ${lastSig}`);
+      return;
+    }
 
     const bidIdPk = publicKeyFromString(this.config.bidId, 'bidId');
     const targetIdPk = publicKeyFromString(this.config.targetId, 'targetId');
     const marginPk = publicKeyFromString(this.config.marginAccount, 'marginAccount');
     const makerBrokerPk = optionalPublicKeyFromString(this.config.makerBroker);
-
-    this.logger.info(
-      `Sending Tensor bid update: amount=${limitBidLamports} estimatedFillSpend=${this.computeEstimatedFillSpendLamports(limitBidLamports)} royaltyFeeBps=${this.state.royaltyFeeBps ?? 0} quantity=${this.config.quantity}`
-    );
 
     const {
       tx: { ixs, extraSigners = [] },
