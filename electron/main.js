@@ -14,6 +14,8 @@ const DEFAULT_SETTINGS = {
   RPC_URL: 'https://api.mainnet-beta.solana.com',
   HOT_WALLET_SECRET: '',
   SIDE: 'buy',
+  SKILL: '',
+  APTITUDE: '',
   COLLECTION_SLUG_UUID: '42c0b80a-5945-4a18-84d3-467af9ccb9a2',
   TARGET_ID: '13oBYyDzdGJxMJPdzRjmCBALL5akjJkarK1C43SUt2Ep',
   MAKER_BROKER: 'DrFkK9QyDPDHHAgRi5jkAFkqeNDf4wkcyDtAv2CeL9tk',
@@ -37,6 +39,23 @@ const AEPHIA_TOKEN_VALIDATE_URL = 'https://api.aephia.com/token/validate';
 const APP_DISPLAY_NAME = 'SA Crew Bot';
 const APP_ROOT = path.join(__dirname, '..');
 const execFileAsync = promisify(execFile);
+const VALID_SKILLS = new Set(['', 'Command', 'Flight', 'Engineering', 'Medical', 'Science', 'Operator', 'Hospitality']);
+const VALID_APTITUDES = new Set(['Minor', 'Major', 'Anomalous']);
+
+function normalizeSettings(settings) {
+  const normalized = { ...settings };
+  if (!VALID_SKILLS.has(String(normalized.SKILL ?? ''))) {
+    normalized.SKILL = '';
+  }
+
+  if (!normalized.SKILL) {
+    normalized.APTITUDE = '';
+  } else if (!VALID_APTITUDES.has(String(normalized.APTITUDE ?? ''))) {
+    normalized.APTITUDE = 'Minor';
+  }
+
+  return normalized;
+}
 
 function shortCommit(value) {
   return String(value || '').trim().slice(0, 7) || 'unknown';
@@ -228,16 +247,16 @@ async function loadSettings() {
     const raw = await fs.readFile(settingsPath(), 'utf8');
     const settings = { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
     settings.MIN_RELEVANT_BID_QUANTITY ||= settings.QUANTITY;
-    return settings;
+    return normalizeSettings(settings);
   } catch {
     const settings = { ...DEFAULT_SETTINGS };
     settings.MIN_RELEVANT_BID_QUANTITY ||= settings.QUANTITY;
-    return settings;
+    return normalizeSettings(settings);
   }
 }
 
 async function saveSettings(payload) {
-  const merged = { ...(await loadSettings()), ...(payload || {}) };
+  const merged = normalizeSettings({ ...(await loadSettings()), ...(payload || {}) });
   await fs.mkdir(path.dirname(settingsPath()), { recursive: true });
   await fs.writeFile(settingsPath(), JSON.stringify(merged, null, 2), 'utf8');
   return merged;

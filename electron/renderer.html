@@ -34,6 +34,8 @@
                       <thead>
                         <tr>
                           <th>Side</th>
+                          <th>Skill</th>
+                          <th>Aptitude</th>
                           <th>Quantity</th>
                           <th>Price (SOL)</th>
                           <th></th>
@@ -45,6 +47,23 @@
                             <select name="SIDE">
                               <option value="buy">buy</option>
                               <option value="sell">sell</option>
+                            </select>
+                          </td>
+                          <td>
+                            <select name="SKILL">
+                              <option value="">No skill - floor</option>
+                              <option value="Command">Command</option>
+                              <option value="Flight">Flight</option>
+                              <option value="Engineering">Engineering</option>
+                              <option value="Medical">Medical</option>
+                              <option value="Science">Science</option>
+                              <option value="Operator">Operator</option>
+                              <option value="Hospitality">Hospitality</option>
+                            </select>
+                          </td>
+                          <td>
+                            <select name="APTITUDE">
+                              <option value="">No aptitude - floor</option>
                             </select>
                           </td>
                           <td>
@@ -69,7 +88,7 @@
                       </tbody>
                       <tfoot>
                         <tr>
-                          <td colspan="3"></td>
+                          <td colspan="5"></td>
                           <td class="remove-cell add-row-cell">
                             <button id="add-limit-order-row-btn" type="button">+ Add Row</button>
                           </td>
