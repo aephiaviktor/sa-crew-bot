@@ -493,17 +493,16 @@ export async function fetchCrewMarketSnapshot(params: {
   const targetId = params.targetId ?? STAR_ATLAS_CREW_TARGET_ID;
   const [listingData, bids] = await Promise.all([fetchCrewListings(slugUuid), fetchCrewTcompBids(slugUuid, null)]);
   const whitelistOwners = new Set((params.whitelistOwners ?? []).map((owner) => owner.toLowerCase()));
+  const ownBidState = params.ownBidState?.trim() || null;
   const allCollectionBids = bids.filter(
     (bid) => bid.target === 'WHITELIST' && bid.targetId === targetId && bid.field == null && bid.fieldId == null
   );
-  const ownBidCandidates = allCollectionBids.filter(
-    (bid) =>
-      bid.ownerAddress === params.ownerAddress ||
-      (params.ownBidState != null && bid.address === params.ownBidState)
-  );
+  const ownBidCandidates = ownBidState
+    ? allCollectionBids.filter((bid) => bid.address === ownBidState)
+    : allCollectionBids.filter((bid) => bid.ownerAddress === params.ownerAddress);
   const detectedOwnBid =
-    (params.ownBidState
-      ? ownBidCandidates.find((bid) => bid.address === params.ownBidState)
+    (ownBidState
+      ? ownBidCandidates.find((bid) => bid.address === ownBidState)
       : null) ??
     ownBidCandidates.find((bid) => bid.quantity > 0) ??
     (ownBidCandidates.length ? ownBidCandidates[0] : null);
@@ -521,22 +520,20 @@ export async function fetchCrewMarketSnapshot(params: {
   const minRelevantBidQuantity = Math.max(1, params.minRelevantBidQuantity ?? 1);
 
   const ownBids = genericCollectionBids.filter(
-    (bid) =>
-      bid.ownerAddress === params.ownerAddress ||
-      (params.ownBidState != null && bid.address === params.ownBidState)
+    (bid) => (ownBidState ? bid.address === ownBidState : bid.ownerAddress === params.ownerAddress)
   );
 
   const competingBids = genericCollectionBids.filter(
     (bid) =>
       bid.ownerAddress !== params.ownerAddress &&
-      (params.ownBidState == null || bid.address !== params.ownBidState) &&
+      (ownBidState == null || bid.address !== ownBidState) &&
       !whitelistOwners.has(String(bid.ownerAddress ?? '').toLowerCase()) &&
       bid.quantity >= minRelevantBidQuantity
   );
 
   const ownTopBid =
-    (params.ownBidState
-      ? ownBids.find((bid) => bid.address === params.ownBidState)
+    (ownBidState
+      ? ownBids.find((bid) => bid.address === ownBidState)
       : null) ??
     ownBids.find((bid) => bid.quantity > 0) ??
     (ownBids.length ? ownBids[0] : null);
