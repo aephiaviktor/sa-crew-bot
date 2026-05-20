@@ -42,49 +42,7 @@
                           <th></th>
                         </tr>
                       </thead>
-                      <tbody>
-                        <tr>
-                          <td>
-                            <select name="SIDE">
-                              <option value="buy">buy</option>
-                              <option value="sell">sell</option>
-                            </select>
-                          </td>
-                          <td>
-                            <div class="cell-stack">
-                              <input name="BID_STATE" type="text" />
-                              <span class="cell-hint">Tensor bid state</span>
-                            </div>
-                          </td>
-                          <td>
-                            <div class="cell-stack">
-                              <input name="BID_ID" type="text" />
-                              <span class="cell-hint">Tensor bid id</span>
-                            </div>
-                          </td>
-                          <td>
-                            <div class="cell-stack">
-                              <input name="QUANTITY" type="number" />
-                              <span class="cell-hint" id="quantity-hint">Max buy quantity</span>
-                            </div>
-                          </td>
-                          <td>
-                            <div class="cell-stack">
-                              <input name="MAX_BID_SOL" type="text" />
-                              <span class="cell-hint" id="price-hint">Max price</span>
-                            </div>
-                          </td>
-                          <td>
-                            <span class="trait-display" id="main-order-traits">—</span>
-                          </td>
-                          <td class="remove-cell">
-                            <div class="cell-stack">
-                              <button id="main-cancel-order-btn" class="cancel-order-btn" type="button">Cancel Order</button>
-                              <button id="main-remove-row-btn" class="remove-row-btn" type="button">Remove</button>
-                            </div>
-                          </td>
-                        </tr>
-                      </tbody>
+                      <tbody id="limit-orders-body"></tbody>
                       <tfoot>
                         <tr>
                           <td colspan="6"></td>

@@ -7,7 +7,7 @@ contextBridge.exposeInMainWorld('botApi', {
   stopBot: () => ipcRenderer.invoke('bot:stop'),
   getBotStatus: () => ipcRenderer.invoke('bot:get-status'),
   applySettingsNow: () => ipcRenderer.invoke('bot:apply-settings-now'),
-  cancelBid: () => ipcRenderer.invoke('bot:cancel-bid'),
+  cancelBid: (rowId) => ipcRenderer.invoke('bot:cancel-bid', rowId),
   getAppVersion: () => ipcRenderer.invoke('app:get-version'),
   checkUpdate: () => ipcRenderer.invoke('app:check-update'),
   applyUpdate: () => ipcRenderer.invoke('app:apply-update'),

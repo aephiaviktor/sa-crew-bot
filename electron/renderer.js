@@ -36,6 +36,7 @@ const tabButtons = Array.from(document.querySelectorAll('.tab-button'));
 const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
 
 const runningPillEl = document.getElementById('running-pill');
+const limitOrdersBodyEl = document.getElementById('limit-orders-body');
 const walletAddressEl = document.getElementById('wallet-address');
 const solBalanceEl = document.getElementById('sol-balance');
 const marginSolBalanceEl = document.getElementById('margin-sol-balance');
@@ -51,12 +52,7 @@ const marginNrEl = document.getElementById('margin-nr');
 const lastActionEl = document.getElementById('last-action');
 const lastCheckAtEl = document.getElementById('last-check-at');
 const cancelBidBtn = document.getElementById('cancel-bid-btn');
-const mainCancelOrderBtn = document.getElementById('main-cancel-order-btn');
-const mainRemoveRowBtn = document.getElementById('main-remove-row-btn');
 const addLimitOrderRowBtn = document.getElementById('add-limit-order-row-btn');
-const quantityHintEl = document.getElementById('quantity-hint');
-const priceHintEl = document.getElementById('price-hint');
-const mainOrderTraitsEl = document.getElementById('main-order-traits');
 const updateBtn = document.getElementById('update-btn');
 const updateModal = document.getElementById('update-modal');
 const updateCurrentVersionEl = document.getElementById('update-current-version');
@@ -78,6 +74,125 @@ let lastUiRefreshAtMs = null;
 let availableUpdate = null;
 let lastUpdateCheckCycleCompletedAt = null;
 let updateCheckInProgress = false;
+let limitOrderRows = [];
+
+function makeRowId() {
+  return 'row-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+}
+
+function normalizeLimitOrderRow(row = {}) {
+  return {
+    id: String(row.id || makeRowId()),
+    side: row.side === 'sell' ? 'sell' : 'buy',
+    bidState: String(row.bidState ?? row.BID_STATE ?? '').trim(),
+    bidId: String(row.bidId ?? row.BID_ID ?? '').trim(),
+    quantity: String(row.quantity ?? row.QUANTITY ?? '').trim(),
+    maxBidSol: String(row.maxBidSol ?? row.MAX_BID_SOL ?? '').trim(),
+    traitsLabel: String(row.traitsLabel ?? '').trim()
+  };
+}
+
+function fallbackLimitOrderFromConfig(config = {}) {
+  return normalizeLimitOrderRow({
+    side: config.SIDE,
+    bidState: config.BID_STATE,
+    bidId: config.BID_ID,
+    quantity: config.QUANTITY,
+    maxBidSol: config.MAX_BID_SOL
+  });
+}
+
+function getLimitOrderRowsFromDom() {
+  if (!limitOrdersBodyEl) {
+    return limitOrderRows;
+  }
+
+  return Array.from(limitOrdersBodyEl.querySelectorAll('tr[data-row-id]')).map((rowEl) =>
+    normalizeLimitOrderRow({
+      id: rowEl.dataset.rowId,
+      side: rowEl.querySelector('[data-field="side"]')?.value,
+      bidState: rowEl.querySelector('[data-field="bidState"]')?.value,
+      bidId: rowEl.querySelector('[data-field="bidId"]')?.value,
+      quantity: rowEl.querySelector('[data-field="quantity"]')?.value,
+      maxBidSol: rowEl.querySelector('[data-field="maxBidSol"]')?.value,
+      traitsLabel: rowEl.querySelector('[data-field="traitsLabel"]')?.textContent
+    })
+  );
+}
+
+function setRowHintText(rowEl) {
+  const side = rowEl.querySelector('[data-field="side"]')?.value || 'buy';
+  const quantityHint = rowEl.querySelector('[data-role="quantity-hint"]');
+  const priceHint = rowEl.querySelector('[data-role="price-hint"]');
+  if (quantityHint) quantityHint.textContent = side === 'sell' ? 'Min sell quantity' : 'Max buy quantity';
+  if (priceHint) priceHint.textContent = side === 'sell' ? 'Min price' : 'Max price';
+}
+
+function renderLimitOrderRows(rows) {
+  limitOrderRows = (Array.isArray(rows) && rows.length ? rows : [{}]).map(normalizeLimitOrderRow);
+
+  if (!limitOrdersBodyEl) {
+    return;
+  }
+
+  limitOrdersBodyEl.innerHTML = '';
+  for (const [index, row] of limitOrderRows.entries()) {
+    const tr = document.createElement('tr');
+    tr.dataset.rowId = row.id;
+    tr.innerHTML = `
+      <td>
+        <select data-field="side" name="SIDE_${index}">
+          <option value="buy"${row.side === 'buy' ? ' selected' : ''}>buy</option>
+          <option value="sell"${row.side === 'sell' ? ' selected' : ''}>sell</option>
+        </select>
+      </td>
+      <td>
+        <div class="cell-stack">
+          <input data-field="bidState" name="BID_STATE_${index}" type="text" value="${escapeHtml(row.bidState)}" />
+          <span class="cell-hint">Tensor bid state</span>
+        </div>
+      </td>
+      <td>
+        <div class="cell-stack">
+          <input data-field="bidId" name="BID_ID_${index}" type="text" value="${escapeHtml(row.bidId)}" />
+          <span class="cell-hint">Tensor bid id</span>
+        </div>
+      </td>
+      <td>
+        <div class="cell-stack">
+          <input data-field="quantity" name="QUANTITY_${index}" type="number" value="${escapeHtml(row.quantity)}" />
+          <span class="cell-hint" data-role="quantity-hint">Max buy quantity</span>
+        </div>
+      </td>
+      <td>
+        <div class="cell-stack">
+          <input data-field="maxBidSol" name="MAX_BID_SOL_${index}" type="text" value="${escapeHtml(row.maxBidSol)}" />
+          <span class="cell-hint" data-role="price-hint">Max price</span>
+        </div>
+      </td>
+      <td>
+        <span class="trait-display" data-field="traitsLabel">${escapeHtml(row.traitsLabel || '—')}</span>
+      </td>
+      <td class="remove-cell">
+        <div class="cell-stack">
+          <button class="cancel-order-btn" type="button" data-action="cancel-row">Cancel Order</button>
+          <button class="remove-row-btn" type="button" data-action="remove-row">Remove</button>
+        </div>
+      </td>
+    `;
+    setRowHintText(tr);
+    tr.querySelector('[data-field="side"]')?.addEventListener('change', () => setRowHintText(tr));
+    tr.querySelector('[data-action="remove-row"]')?.addEventListener('click', () => {
+      const nextRows = getLimitOrderRowsFromDom().filter((candidate) => candidate.id !== row.id);
+      renderLimitOrderRows(nextRows.length ? nextRows : [normalizeLimitOrderRow({})]);
+      setMainActionFeedback('Row removed. Save settings to apply.', 'info');
+    });
+    tr.querySelector('[data-action="cancel-row"]')?.addEventListener('click', async (event) => {
+      await cancelActiveBidFromUi(event.currentTarget, row.id);
+    });
+    limitOrdersBodyEl.appendChild(tr);
+  }
+}
 
 function setUpdateButtonAvailable(available) {
   updateBtn?.classList.toggle('update-available', Boolean(available));
@@ -94,13 +209,18 @@ function setRunning(running) {
   }
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function updateLimitOrderHints() {
-  const side = String((mainForm.elements.namedItem('SIDE') || {}).value || 'buy');
-  if (quantityHintEl) {
-    quantityHintEl.textContent = side === 'sell' ? 'Min sell quantity' : 'Max buy quantity';
-  }
-  if (priceHintEl) {
-    priceHintEl.textContent = side === 'sell' ? 'Min price' : 'Max price';
+  for (const rowEl of Array.from(limitOrdersBodyEl?.querySelectorAll('tr[data-row-id]') || [])) {
+    setRowHintText(rowEl);
   }
 }
 
@@ -128,10 +248,23 @@ function readFormConfig() {
     const element = mainForm.elements.namedItem(key) || form.elements.namedItem(key);
     data[key] = element ? String(element.value ?? '').trim() : '';
   }
+  const rows = getLimitOrderRowsFromDom();
+  data.LIMIT_ORDERS = rows;
+  const first = rows[0] || {};
+  data.SIDE = first.side || data.SIDE || 'buy';
+  data.BID_STATE = first.bidState || '';
+  data.BID_ID = first.bidId || '';
+  data.QUANTITY = first.quantity || '';
+  data.MAX_BID_SOL = first.maxBidSol || '';
   return data;
 }
 
 function writeFormConfig(config) {
+  const rows = Array.isArray(config?.LIMIT_ORDERS) && config.LIMIT_ORDERS.length
+    ? config.LIMIT_ORDERS
+    : [fallbackLimitOrderFromConfig(config)];
+  renderLimitOrderRows(rows);
+
   for (const key of fields) {
     const element = mainForm.elements.namedItem(key) || form.elements.namedItem(key);
     if (element) {
@@ -453,26 +586,12 @@ function renderStatusSnapshot(status) {
   setRunning(running);
   lastUiRefreshAtMs = Date.now();
 
-  const bidIdField = mainForm.elements.namedItem('BID_ID') || form.elements.namedItem('BID_ID');
-  if (bidIdField && status?.bidId) {
-    bidIdField.value = status.bidId;
-  }
-  const bidStateField = mainForm.elements.namedItem('BID_STATE') || form.elements.namedItem('BID_STATE');
-  if (bidStateField && typeof status?.bidState === 'string') {
-    bidStateField.value = status.bidState;
-  }
-
   currentBidEl.textContent = formatLamportsToSol(status?.currentBidLamports);
   bestCompetingBidEl.textContent = formatLamportsToSol(status?.bestCompetingBidLamports);
   bestAskEl.textContent = formatLamportsToSol(status?.bestAskLamports);
   targetBidEl.textContent = formatLamportsToSol(status?.targetBidLamports);
   lastActionEl.textContent = status?.lastAction || '—';
   lastCheckAtEl.textContent = formatTimestamp(status?.lastCheckAt);
-  if (mainOrderTraitsEl) {
-    mainOrderTraitsEl.textContent = status?.currentOrderTraitsLabel || '—';
-    mainOrderTraitsEl.title = status?.currentOrderTraitsLabel || '';
-  }
-
   if (walletAddressEl) {
     walletAddressEl.textContent = shortenWallet(status?.wallet || '—');
     walletAddressEl.title = status?.wallet || '—';
@@ -509,6 +628,22 @@ function renderStatusSnapshot(status) {
 
   const incomingOpenOrders = Array.isArray(status?.openOrders) ? status.openOrders : [];
   const incomingRecentActivity = Array.isArray(status?.recentActivity) ? status.recentActivity : [];
+  for (const [index, rowEl] of Array.from(limitOrdersBodyEl?.querySelectorAll('tr[data-row-id]') || []).entries()) {
+    const order = incomingOpenOrders[index];
+    const traitsEl = rowEl.querySelector('[data-field="traitsLabel"]');
+    const bidStateEl = rowEl.querySelector('[data-field="bidState"]');
+    const bidIdEl = rowEl.querySelector('[data-field="bidId"]');
+    if (traitsEl) {
+      traitsEl.textContent = order?.traitsLabel || (index === 0 ? status?.currentOrderTraitsLabel : '') || '—';
+      traitsEl.title = traitsEl.textContent;
+    }
+    if (bidStateEl && order?.bidState) {
+      bidStateEl.value = order.bidState;
+    }
+    if (bidIdEl && order?.bidId) {
+      bidIdEl.value = order.bidId;
+    }
+  }
 
   if (incomingOpenOrders.length > 0) {
     lastKnownOpenOrders = incomingOpenOrders;
@@ -663,19 +798,16 @@ toggleSensitiveBtn.addEventListener('click', () => {
 
 mainForm.elements.namedItem('SIDE')?.addEventListener('change', updateLimitOrderHints);
 
-async function cancelActiveBidFromUi(sourceButton) {
+async function cancelActiveBidFromUi(sourceButton, rowId = null) {
   if (sourceButton) {
     sourceButton.disabled = true;
   }
   if (cancelBidBtn && cancelBidBtn !== sourceButton) {
     cancelBidBtn.disabled = true;
   }
-  if (mainCancelOrderBtn && mainCancelOrderBtn !== sourceButton) {
-    mainCancelOrderBtn.disabled = true;
-  }
 
   try {
-    const result = await window.botApi.cancelBid();
+    const result = await window.botApi.cancelBid(rowId);
 
     if (result?.ok) {
       appendLog(`[${new Date().toISOString()}] [INFO] Cancel bid ${result.status}`);
@@ -694,9 +826,6 @@ async function cancelActiveBidFromUi(sourceButton) {
     if (cancelBidBtn && cancelBidBtn !== sourceButton) {
       cancelBidBtn.disabled = false;
     }
-    if (mainCancelOrderBtn && mainCancelOrderBtn !== sourceButton) {
-      mainCancelOrderBtn.disabled = false;
-    }
   }
 }
 
@@ -704,16 +833,19 @@ cancelBidBtn?.addEventListener('click', async () => {
   await cancelActiveBidFromUi(cancelBidBtn);
 });
 
-mainCancelOrderBtn?.addEventListener('click', async () => {
-  await cancelActiveBidFromUi(mainCancelOrderBtn);
-});
-
-mainRemoveRowBtn?.addEventListener('click', () => {
-  setMainActionFeedback('Only one Tensor limit order row is supported right now.', 'info');
-});
-
 addLimitOrderRowBtn?.addEventListener('click', () => {
-  setMainActionFeedback('Only one Tensor limit order row is supported right now.', 'info');
+  const rows = getLimitOrderRowsFromDom();
+  renderLimitOrderRows([
+    ...rows,
+    normalizeLimitOrderRow({
+      side: 'buy',
+      bidState: '',
+      bidId: '',
+      quantity: rows[0]?.quantity || '',
+      maxBidSol: rows[0]?.maxBidSol || ''
+    })
+  ]);
+  setMainActionFeedback('Row added. Save settings to apply.', 'info');
 });
 
 updateBtn?.addEventListener('click', () => {

@@ -25,11 +25,12 @@ const DEFAULT_SETTINGS = {
   MAX_BID_SOL: '0.008',
   BID_STEP_SOL: '0.00001',
   CHECK_INTERVAL_MINUTES: '30',
-  MIN_RELEVANT_BID_QUANTITY: ''
+  MIN_RELEVANT_BID_QUANTITY: '',
+  LIMIT_ORDERS: null
 };
 
 let mainWindow = null;
-let bot = null;
+let botEntries = [];
 let botRunning = false;
 let relaunchScheduled = false;
 
@@ -227,23 +228,64 @@ async function loadSettings() {
   try {
     const raw = await fs.readFile(settingsPath(), 'utf8');
     const settings = { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
-    settings.MIN_RELEVANT_BID_QUANTITY ||= settings.QUANTITY;
-    return settings;
+    return normalizeSettings(settings);
   } catch {
     const settings = { ...DEFAULT_SETTINGS };
-    settings.MIN_RELEVANT_BID_QUANTITY ||= settings.QUANTITY;
-    return settings;
+    return normalizeSettings(settings);
   }
 }
 
 async function saveSettings(payload) {
-  const merged = { ...(await loadSettings()), ...(payload || {}) };
+  const merged = normalizeSettings({ ...(await loadSettings()), ...(payload || {}) });
   await fs.mkdir(path.dirname(settingsPath()), { recursive: true });
   await fs.writeFile(settingsPath(), JSON.stringify(merged, null, 2), 'utf8');
   return merged;
 }
 
-async function persistBidIdentityFromStatus(status) {
+function makeOrderId() {
+  return 'order-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+}
+
+function normalizeLimitOrder(row, index, settings) {
+  const fallback = settings || DEFAULT_SETTINGS;
+  return {
+    id: String(row?.id || makeOrderId()),
+    side: row?.side === 'sell' ? 'sell' : 'buy',
+    bidState: String(row?.bidState ?? row?.BID_STATE ?? fallback.BID_STATE ?? '').trim(),
+    bidId: String(row?.bidId ?? row?.BID_ID ?? fallback.BID_ID ?? '').trim(),
+    quantity: String(row?.quantity ?? row?.QUANTITY ?? fallback.QUANTITY ?? '10').trim(),
+    maxBidSol: String(row?.maxBidSol ?? row?.MAX_BID_SOL ?? fallback.MAX_BID_SOL ?? '0.008').trim()
+  };
+}
+
+function normalizeSettings(settings) {
+  const normalized = { ...settings };
+  normalized.MIN_RELEVANT_BID_QUANTITY ||= normalized.QUANTITY;
+
+  const rows = Array.isArray(normalized.LIMIT_ORDERS) && normalized.LIMIT_ORDERS.length
+    ? normalized.LIMIT_ORDERS
+    : [
+        {
+          side: normalized.SIDE,
+          bidState: normalized.BID_STATE,
+          bidId: normalized.BID_ID,
+          quantity: normalized.QUANTITY,
+          maxBidSol: normalized.MAX_BID_SOL
+        }
+      ];
+
+  normalized.LIMIT_ORDERS = rows.map((row, index) => normalizeLimitOrder(row, index, normalized));
+  const first = normalized.LIMIT_ORDERS[0];
+  normalized.SIDE = first.side;
+  normalized.BID_STATE = first.bidState;
+  normalized.BID_ID = first.bidId;
+  normalized.QUANTITY = first.quantity;
+  normalized.MAX_BID_SOL = first.maxBidSol;
+
+  return normalized;
+}
+
+async function persistBidIdentityFromStatus(status, rowId) {
   if (!status || !status.bidId) {
     return;
   }
@@ -251,37 +293,101 @@ async function persistBidIdentityFromStatus(status) {
   const current = await loadSettings();
   const nextBidId = String(status.bidId || '').trim();
   const nextBidState = String(status.bidState || '').trim();
+  const currentRows = Array.isArray(current.LIMIT_ORDERS) ? current.LIMIT_ORDERS : [];
+  const previousRow = currentRows.find((row) => row.id === rowId);
+  const nextRows = currentRows.map((row) =>
+    row.id === rowId ? { ...row, bidId: nextBidId, bidState: nextBidState } : row
+  );
 
-  if (current.BID_ID === nextBidId && current.BID_STATE === nextBidState) {
+  if (previousRow?.bidId === nextBidId && previousRow?.bidState === nextBidState) {
     return;
   }
 
-  await saveSettings({ BID_ID: nextBidId, BID_STATE: nextBidState });
-  logger.info(`Persisted bid identity to settings: BID_ID=${nextBidId}, BID_STATE=${nextBidState || '(empty)'}`);
+  await saveSettings({ LIMIT_ORDERS: nextRows });
+  logger.info('Persisted bid identity to settings for ' + rowId + ': BID_ID=' + nextBidId + ', BID_STATE=' + (nextBidState || '(empty)'));
 }
 
-function makeBotConfig(s) {
-  const quantity = Number(s.QUANTITY);
+function makeBotConfig(s, row) {
+  const order = normalizeLimitOrder(row || {}, 0, s);
+  const quantity = Number(order.quantity);
   const minRelevantBidQuantity = Number(s.MIN_RELEVANT_BID_QUANTITY);
 
   return {
     rpcUrl: s.RPC_URL,
     hotWalletSecret: s.HOT_WALLET_SECRET,
-    side: s.SIDE === 'sell' ? 'sell' : 'buy',
+    side: order.side === 'sell' ? 'sell' : 'buy',
     skill: s.SKILL,
     aptitude: s.APTITUDE,
     collectionSlugUuid: s.COLLECTION_SLUG_UUID,
     targetId: s.TARGET_ID,
     makerBroker: s.MAKER_BROKER,
-    bidState: s.BID_STATE,
-    bidId: s.BID_ID,
+    bidState: order.bidState,
+    bidId: order.bidId,
     marginAccount: s.MARGIN_ACCOUNT,
     quantity,
     minRelevantBidQuantity: Number.isFinite(minRelevantBidQuantity) && minRelevantBidQuantity > 0 ? minRelevantBidQuantity : quantity,
     minBidSol: Number(s.MIN_BID_SOL),
-    maxBidSol: Number(s.MAX_BID_SOL),
+    maxBidSol: Number(order.maxBidSol),
     bidStepSol: Number(s.BID_STEP_SOL),
     checkIntervalMinutes: Number(s.CHECK_INTERVAL_MINUTES)
+  };
+}
+
+function emptyStatus() {
+  return {
+    running: false,
+    wallet: null,
+    bidState: null,
+    bidId: null,
+    marginAccount: null,
+    currentBidLamports: null,
+    bestCompetingBidLamports: null,
+    competingBidLamports: [],
+    bestAskLamports: null,
+    targetBidLamports: null,
+    currentOrderTraitsLabel: '—',
+    lastCheckAt: null,
+    lastAction: null,
+    lastUpdatedAt: null,
+    startedAt: null,
+    lastCycleStartedAt: null,
+    lastCycleCompletedAt: null,
+    lastCycleDurationMs: null,
+    checkIntervalMinutes: null,
+    solBalance: null,
+    marginAccountSolBalance: null,
+    openOrders: [],
+    recentActivity: []
+  };
+}
+
+async function getCombinedBotStatus() {
+  if (!botEntries.length) {
+    return emptyStatus();
+  }
+
+  const statuses = await Promise.all(
+    botEntries.map(async (entry) => {
+      const status = await entry.bot.getStatus();
+      await persistBidIdentityFromStatus(status, entry.row.id);
+      return { entry, status };
+    })
+  );
+  const first = statuses[0]?.status || emptyStatus();
+
+  return {
+    ...first,
+    running: botRunning,
+    openOrders: statuses.flatMap(({ status }) => status.openOrders || []),
+    recentActivity: statuses
+      .flatMap(({ status, entry }) =>
+        (status.recentActivity || []).map((activity) => ({
+          ...activity,
+          message: 'Order ' + (entry.index + 1) + ': ' + (activity.message || '')
+        }))
+      )
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 16)
   };
 }
 
@@ -292,18 +398,22 @@ async function startBotFromSettings() {
 
   const settings = await loadSettings();
   await validateAephiaApiKeyOrThrow(settings);
-  bot = new CrewBidBot(makeBotConfig(settings), logger);
+  botEntries = settings.LIMIT_ORDERS.map((row, index) => ({
+    row,
+    index,
+    bot: new CrewBidBot(makeBotConfig(settings, row), logger)
+  }));
   botRunning = true;
 
   broadcast('bot-status', {
     running: true,
-    status: await bot.getStatus()
+    status: await getCombinedBotStatus()
   });
 
-  void bot.start().catch((err) => {
+  void Promise.all(botEntries.map((entry) => entry.bot.start())).catch((err) => {
     logger.error('Bot exited with error:', err);
     botRunning = false;
-    bot = null;
+    botEntries = [];
     broadcast('bot-status', {
       running: false,
       status: null
@@ -312,19 +422,19 @@ async function startBotFromSettings() {
 }
 
 async function stopBot() {
-  if (!bot || !botRunning) {
+  if (!botEntries.length || !botRunning) {
     return;
   }
 
-  await bot.stop();
+  await Promise.all(botEntries.map((entry) => entry.bot.stop()));
   botRunning = false;
 
   broadcast('bot-status', {
     running: false,
-    status: bot ? await bot.getStatus() : null
+    status: await getCombinedBotStatus()
   });
 
-  bot = null;
+  botEntries = [];
 }
 
 function createWindow() {
@@ -357,7 +467,7 @@ ipcMain.handle('bot:start', async () => {
   } catch (err) {
     logger.error('Start bot failed:', err);
     botRunning = false;
-    bot = null;
+    botEntries = [];
     broadcast('bot-status', {
       running: false,
       status: null
@@ -376,58 +486,24 @@ ipcMain.handle('bot:stop', async () => {
 });
 
 ipcMain.handle('bot:apply-settings-now', async () => {
-  if (!bot || !botRunning) {
+  if (!botEntries.length || !botRunning) {
     return { ok: false, status: 'bot_not_running' };
   }
 
-  const settings = await loadSettings();
-  const nextConfig = makeBotConfig(settings);
-  bot.applyConfigUpdates(nextConfig);
-  await bot.runImmediateCycle();
-
-  const status = await bot.getStatus();
-  await persistBidIdentityFromStatus(status);
+  await stopBot();
+  await startBotFromSettings();
+  const status = await getCombinedBotStatus();
   broadcast('bot-status', { running: true, status });
 
   return { ok: true, status: 'applied' };
 });
 
 ipcMain.handle('bot:get-status', async () => {
-  if (!bot) {
-    return {
-      running: false,
-      wallet: null,
-      bidState: null,
-      bidId: null,
-      marginAccount: null,
-      currentBidLamports: null,
-      bestCompetingBidLamports: null,
-      competingBidLamports: [],
-      bestAskLamports: null,
-      targetBidLamports: null,
-      currentOrderTraitsLabel: '—',
-      lastCheckAt: null,
-      lastAction: null,
-      lastUpdatedAt: null,
-      startedAt: null,
-      lastCycleStartedAt: null,
-      lastCycleCompletedAt: null,
-      lastCycleDurationMs: null,
-      checkIntervalMinutes: null,
-      solBalance: null,
-      marginAccountSolBalance: null,
-      openOrders: [],
-      recentActivity: []
-    };
-  }
-
-  const status = await bot.getStatus();
-  await persistBidIdentityFromStatus(status);
-  return status;
+  return await getCombinedBotStatus();
 });
 
-ipcMain.handle('bot:cancel-bid', async () => {
-  if (!bot || !botRunning) {
+ipcMain.handle('bot:cancel-bid', async (_event, rowId) => {
+  if (!botEntries.length || !botRunning) {
     return {
       ok: false,
       status: 'bot_not_running'
@@ -435,8 +511,15 @@ ipcMain.handle('bot:cancel-bid', async () => {
   }
 
   try {
-    const changed = await bot.cancelBidNow();
-    const status = await bot.getStatus();
+    const targetEntries = rowId ? botEntries.filter((entry) => entry.row.id === rowId) : botEntries;
+    if (!targetEntries.length) {
+      return {
+        ok: false,
+        status: 'order_not_found'
+      };
+    }
+    const results = await Promise.all(targetEntries.map((entry) => entry.bot.cancelBidNow()));
+    const status = await getCombinedBotStatus();
 
     broadcast('bot-status', {
       running: botRunning,
@@ -445,7 +528,7 @@ ipcMain.handle('bot:cancel-bid', async () => {
 
     return {
       ok: true,
-      status: changed ? 'cancelled' : 'no_active_bid',
+      status: results.some(Boolean) ? 'cancelled' : 'no_active_bid',
       botStatus: status
     };
   } catch (err) {
