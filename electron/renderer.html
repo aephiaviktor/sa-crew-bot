@@ -34,6 +34,8 @@
                       <thead>
                         <tr>
                           <th>Side</th>
+                          <th>Bid State</th>
+                          <th>Bid ID</th>
                           <th>Quantity</th>
                           <th>Price (SOL)</th>
                           <th>Traits</th>
@@ -47,6 +49,18 @@
                               <option value="buy">buy</option>
                               <option value="sell">sell</option>
                             </select>
+                          </td>
+                          <td>
+                            <div class="cell-stack">
+                              <input name="BID_STATE" type="text" />
+                              <span class="cell-hint">Tensor bid state</span>
+                            </div>
+                          </td>
+                          <td>
+                            <div class="cell-stack">
+                              <input name="BID_ID" type="text" />
+                              <span class="cell-hint">Tensor bid id</span>
+                            </div>
                           </td>
                           <td>
                             <div class="cell-stack">
@@ -73,7 +87,7 @@
                       </tbody>
                       <tfoot>
                         <tr>
-                          <td colspan="4"></td>
+                          <td colspan="6"></td>
                           <td class="remove-cell add-row-cell">
                             <button id="add-limit-order-row-btn" type="button">+ Add Row</button>
                           </td>
@@ -135,15 +149,6 @@
                     <input name="MARGIN_ACCOUNT" type="text" />
                   </label>
 
-                  <label>
-                    Bid State
-                    <input name="BID_STATE" type="text" />
-                  </label>
-
-                  <label>
-                    Bid ID
-                    <input name="BID_ID" type="text" />
-                  </label>
                 </div>
 
                 <label>

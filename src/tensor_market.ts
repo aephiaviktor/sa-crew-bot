@@ -412,7 +412,7 @@ function cleanAttributes(attributes: Array<{ trait_type: string; value: string }
 export function formatAttributesLabel(attributes: CrewAttributeFilter[]): string {
   const cleaned = cleanAttributes(attributes);
   if (!cleaned.length) {
-    return 'Floor';
+    return 'No traits -> floor';
   }
 
   return cleaned.map((attribute) => `${attribute.trait_type}: ${attribute.value}`).join(', ');

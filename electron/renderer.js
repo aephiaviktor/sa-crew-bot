@@ -1,5 +1,7 @@
 const mainFields = [
   'SIDE',
+  'BID_STATE',
+  'BID_ID',
   'QUANTITY',
   'MAX_BID_SOL'
 ];
@@ -11,8 +13,6 @@ const setupFields = [
   'COLLECTION_SLUG_UUID',
   'TARGET_ID',
   'MAKER_BROKER',
-  'BID_STATE',
-  'BID_ID',
   'MARGIN_ACCOUNT',
   'BID_STEP_SOL',
   'MIN_BID_SOL',
@@ -453,11 +453,11 @@ function renderStatusSnapshot(status) {
   setRunning(running);
   lastUiRefreshAtMs = Date.now();
 
-  const bidIdField = form.elements.namedItem('BID_ID');
+  const bidIdField = mainForm.elements.namedItem('BID_ID') || form.elements.namedItem('BID_ID');
   if (bidIdField && status?.bidId) {
     bidIdField.value = status.bidId;
   }
-  const bidStateField = form.elements.namedItem('BID_STATE');
+  const bidStateField = mainForm.elements.namedItem('BID_STATE') || form.elements.namedItem('BID_STATE');
   if (bidStateField && typeof status?.bidState === 'string') {
     bidStateField.value = status.bidState;
   }
