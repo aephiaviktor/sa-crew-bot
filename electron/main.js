@@ -117,13 +117,17 @@ async function getUpdateState(fetchRemote) {
   ]);
   const localPackage = await readLocalPackageJson();
   const remotePackage = await readRemotePackageJson();
-  const currentVersion = localPackage?.version || packageJson.version || 'unknown';
+  const runtimeVersion = packageJson.version || 'unknown';
+  const localSourceVersion = localPackage?.version || runtimeVersion;
+  const currentVersion = runtimeVersion;
   const remoteVersion = remotePackage?.version || null;
   const commitUpdateAvailable = currentCommit !== remoteCommit;
   const versionUpdateAvailable = remoteVersion ? compareVersions(remoteVersion, currentVersion) > 0 : false;
 
   return {
     currentVersion,
+    runtimeVersion,
+    localSourceVersion,
     remoteVersion,
     currentCommit,
     remoteCommit,
@@ -580,9 +584,8 @@ ipcMain.handle('bot:cancel-bid', async (_event, rowId) => {
 });
 
 ipcMain.handle('app:get-version', async () => {
-  const localPackage = await readLocalPackageJson();
   return {
-    version: localPackage?.version || packageJson.version || 'unknown'
+    version: packageJson.version || 'unknown'
   };
 });
 
