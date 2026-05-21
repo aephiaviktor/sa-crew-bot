@@ -386,9 +386,15 @@ function renderUpdateModalState(result, error = null) {
     return;
   }
 
-  if (result?.updateAvailable) {
+  if (result?.versionUpdateAvailable) {
     updateMessageEl.textContent = 'A newer SA Crew Bot version is available on GitHub.';
     updateConfirmBtn.textContent = 'Update to v' + latestVersion;
+    return;
+  }
+
+  if (result?.commitUpdateAvailable) {
+    updateMessageEl.textContent = 'GitHub has source changes for the current SA Crew Bot version.';
+    updateConfirmBtn.textContent = 'Update';
     return;
   }
 

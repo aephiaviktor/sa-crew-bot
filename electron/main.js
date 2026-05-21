@@ -43,6 +43,21 @@ function shortCommit(value) {
   return String(value || '').trim().slice(0, 7) || 'unknown';
 }
 
+function compareVersions(left, right) {
+  const leftParts = String(left || '').split('.').map((part) => Number.parseInt(part, 10));
+  const rightParts = String(right || '').split('.').map((part) => Number.parseInt(part, 10));
+  const length = Math.max(leftParts.length, rightParts.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const leftPart = Number.isFinite(leftParts[index]) ? leftParts[index] : 0;
+    const rightPart = Number.isFinite(rightParts[index]) ? rightParts[index] : 0;
+    if (leftPart > rightPart) return 1;
+    if (leftPart < rightPart) return -1;
+  }
+
+  return 0;
+}
+
 async function runProjectCommand(command, args, options = {}) {
   const result = await execFileAsync(command, args, {
     cwd: APP_ROOT,
@@ -104,6 +119,8 @@ async function getUpdateState(fetchRemote) {
   const remotePackage = await readRemotePackageJson();
   const currentVersion = localPackage?.version || packageJson.version || 'unknown';
   const remoteVersion = remotePackage?.version || null;
+  const commitUpdateAvailable = currentCommit !== remoteCommit;
+  const versionUpdateAvailable = remoteVersion ? compareVersions(remoteVersion, currentVersion) > 0 : false;
 
   return {
     currentVersion,
@@ -112,7 +129,9 @@ async function getUpdateState(fetchRemote) {
     remoteCommit,
     currentShortCommit: shortCommit(currentCommit),
     remoteShortCommit: shortCommit(remoteCommit),
-    updateAvailable: currentCommit !== remoteCommit,
+    updateAvailable: versionUpdateAvailable || commitUpdateAvailable,
+    versionUpdateAvailable,
+    commitUpdateAvailable,
     hasLocalChanges: statusOutput.length > 0
   };
 }
