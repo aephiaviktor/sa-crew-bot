@@ -44,14 +44,8 @@ const botRuntimeEl = document.getElementById('bot-runtime');
 const lastCycleAtEl = document.getElementById('last-cycle-at');
 const nextCycleInEl = document.getElementById('next-cycle-in');
 
-const currentBidEl = document.getElementById('current-bid');
-const bestCompetingBidEl = document.getElementById('best-competing-bid');
 const bestAskEl = document.getElementById('best-ask');
-const targetBidEl = document.getElementById('target-bid');
 const marginNrEl = document.getElementById('margin-nr');
-const lastActionEl = document.getElementById('last-action');
-const lastCheckAtEl = document.getElementById('last-check-at');
-const cancelBidBtn = document.getElementById('cancel-bid-btn');
 const addLimitOrderRowBtn = document.getElementById('add-limit-order-row-btn');
 const updateBtn = document.getElementById('update-btn');
 const updateModal = document.getElementById('update-modal');
@@ -586,12 +580,6 @@ function renderStatusSnapshot(status) {
   setRunning(running);
   lastUiRefreshAtMs = Date.now();
 
-  currentBidEl.textContent = formatLamportsToSol(status?.currentBidLamports);
-  bestCompetingBidEl.textContent = formatLamportsToSol(status?.bestCompetingBidLamports);
-  bestAskEl.textContent = formatLamportsToSol(status?.bestAskLamports);
-  targetBidEl.textContent = formatLamportsToSol(status?.targetBidLamports);
-  lastActionEl.textContent = status?.lastAction || '—';
-  lastCheckAtEl.textContent = formatTimestamp(status?.lastCheckAt);
   if (walletAddressEl) {
     walletAddressEl.textContent = shortenWallet(status?.wallet || '—');
     walletAddressEl.title = status?.wallet || '—';
@@ -813,9 +801,6 @@ async function cancelActiveBidFromUi(sourceButton, rowId = null) {
   if (sourceButton) {
     sourceButton.disabled = true;
   }
-  if (cancelBidBtn && cancelBidBtn !== sourceButton) {
-    cancelBidBtn.disabled = true;
-  }
 
   try {
     const result = await window.botApi.cancelBid(rowId);
@@ -834,15 +819,8 @@ async function cancelActiveBidFromUi(sourceButton, rowId = null) {
     if (sourceButton) {
       sourceButton.disabled = false;
     }
-    if (cancelBidBtn && cancelBidBtn !== sourceButton) {
-      cancelBidBtn.disabled = false;
-    }
   }
 }
-
-cancelBidBtn?.addEventListener('click', async () => {
-  await cancelActiveBidFromUi(cancelBidBtn);
-});
 
 addLimitOrderRowBtn?.addEventListener('click', () => {
   const rows = getLimitOrderRowsFromDom();
