@@ -81,6 +81,15 @@ async function readRemotePackageJson() {
   }
 }
 
+async function readLocalPackageJson() {
+  try {
+    const raw = await fs.readFile(path.join(APP_ROOT, 'package.json'), 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return packageJson;
+  }
+}
+
 async function getUpdateState(fetchRemote) {
   if (fetchRemote) {
     await gitOutput(['fetch', '--prune', 'origin', 'main'], { timeout: 120000 });
@@ -91,11 +100,13 @@ async function getUpdateState(fetchRemote) {
     gitOutput(['rev-parse', 'origin/main']),
     gitOutput(['status', '--porcelain'])
   ]);
+  const localPackage = await readLocalPackageJson();
   const remotePackage = await readRemotePackageJson();
+  const currentVersion = localPackage?.version || packageJson.version || 'unknown';
   const remoteVersion = remotePackage?.version || null;
 
   return {
-    currentVersion: packageJson.version || 'unknown',
+    currentVersion,
     remoteVersion,
     currentCommit,
     remoteCommit,
@@ -550,8 +561,9 @@ ipcMain.handle('bot:cancel-bid', async (_event, rowId) => {
 });
 
 ipcMain.handle('app:get-version', async () => {
+  const localPackage = await readLocalPackageJson();
   return {
-    version: packageJson.version || 'unknown'
+    version: localPackage?.version || packageJson.version || 'unknown'
   };
 });
 
