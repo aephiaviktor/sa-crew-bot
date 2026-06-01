@@ -37,7 +37,16 @@ let relaunchScheduled = false;
 const AEPHIA_TOKEN_VALIDATE_URL = 'https://api.aephia.com/token/validate';
 const APP_DISPLAY_NAME = 'SA Crew Bot';
 const APP_ROOT = path.join(__dirname, '..');
+const APP_USER_MODEL_ID = 'com.aephia.sa-crew-bot';
 const execFileAsync = promisify(execFile);
+
+if (process.platform === 'win32') {
+  app.setAppUserModelId(APP_USER_MODEL_ID);
+}
+
+function getWindowIconPath() {
+  return path.join(APP_ROOT, 'assets', process.platform === 'win32' ? 'sa_crew_bot_avatar.ico' : 'sa_crew_bot_avatar.png');
+}
 
 function shortCommit(value) {
   return String(value || '').trim().slice(0, 7) || 'unknown';
@@ -480,16 +489,21 @@ async function stopBot() {
 }
 
 function createWindow() {
+  const iconPath = getWindowIconPath();
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 860,
-    icon: path.join(__dirname, '..', 'assets', 'sa_crew_bot_avatar.png'),
+    icon: iconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false
     }
   });
+
+  if (typeof mainWindow.setIcon === 'function') {
+    mainWindow.setIcon(iconPath);
+  }
 
   mainWindow.loadFile(path.join(__dirname, 'renderer.html'));
 }
