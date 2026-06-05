@@ -115,10 +115,24 @@ h3 {
 
 .app-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 10px;
+}
+
+.app-header-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.app-header-logo {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  display: block;
 }
 
 .panel,
