@@ -186,16 +186,25 @@ class SharedRpcConnectionLimiter {
 
   constructor(
     private readonly logger: CrewBidBotLogger,
-    private readonly useSharedLimiter: () => boolean
+    private readonly useSharedLimiter: () => boolean,
+    private readonly metricsApp: string,
+    private readonly metricsProfile: string = 'default'
   ) {}
 
-  async wait(label: string, bucketName: 'rpc:shared' | 'tx:shared' = 'rpc:shared'): Promise<void> {
+  async wait(label: string, bucketName: 'rpc:shared' | 'tx:shared' = 'rpc:shared', method: string = label): Promise<void> {
     if (!this.useSharedLimiter()) {
       return;
     }
 
     const startedAt = Date.now();
-    await this.sharedLimiter.wait(bucketName, { label });
+    await this.sharedLimiter.wait(bucketName, {
+      label,
+      metrics: {
+        app: this.metricsApp,
+        profile: this.metricsProfile,
+        method
+      }
+    });
     const waitMs = Date.now() - startedAt;
     const logKey = `${bucketName}:${label}`;
     const lastLoggedAt = this.lastSharedWaitLogAtMs.get(logKey) ?? 0;
@@ -214,7 +223,7 @@ function createLimitedConnection(
   useSharedLimiter: () => boolean
 ): Connection {
   const connection = new Connection(rpcUrl, { commitment: 'confirmed' });
-  const limiter = new SharedRpcConnectionLimiter(logger, useSharedLimiter);
+  const limiter = new SharedRpcConnectionLimiter(logger, useSharedLimiter, 'SA Crew Bot');
 
   return new Proxy(connection, {
     get(target, prop, receiver) {
@@ -224,9 +233,10 @@ function createLimitedConnection(
       }
 
       return async (...args: unknown[]) => {
+        const method = String(prop);
         const label = `Connection.${String(prop)}()`;
         const bucketName = prop === 'sendRawTransaction' ? 'tx:shared' : 'rpc:shared';
-        await limiter.wait(label, bucketName);
+        await limiter.wait(label, bucketName, method);
         return value.apply(target, args);
       };
     }
