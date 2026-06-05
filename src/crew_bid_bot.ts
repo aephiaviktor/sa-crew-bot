@@ -222,7 +222,7 @@ function createLimitedConnection(
   logger: CrewBidBotLogger,
   useSharedLimiter: () => boolean
 ): Connection {
-  const connection = new Connection(rpcUrl, { commitment: 'confirmed' });
+  const connection = new Connection(rpcUrl, { commitment: 'confirmed', disableRetryOnRateLimit: true });
   const limiter = new SharedRpcConnectionLimiter(logger, useSharedLimiter, 'SA Crew Bot');
 
   return new Proxy(connection, {
