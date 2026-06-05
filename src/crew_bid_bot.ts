@@ -4,6 +4,7 @@ import { AnchorProvider, Wallet } from '@coral-xyz/anchor';
 import BN from 'bn.js';
 import { Connection, Keypair, PublicKey, Transaction, TransactionInstruction, Signer } from '@solana/web3.js';
 import { TCompSDK, Target } from '@tensor-oss/tcomp-sdk';
+import { RpcLimiter } from 'rpc_limiter';
 import {
   type CrewAttributeFilter,
   type CrewMarketSnapshot,
@@ -17,6 +18,8 @@ import {
 const SYSTEM_PROGRAM_ID = new PublicKey('11111111111111111111111111111111');
 const RECENT_ACTIVITY_LIMIT = 8;
 const CHECK_INTERVAL_MINUTES_TIERS = [5, 10, 20, 30, 60] as const;
+const RPC_LIMITER_SLOW_WAIT_LOG_MS = 100;
+const RPC_LIMITER_WAIT_LOG_THROTTLE_MS = 60000;
 
 export type CrewBidBotConfig = {
   rowId: string;
@@ -39,6 +42,7 @@ export type CrewBidBotConfig = {
   maxBidSol: number;
   bidStepSol: number;
   checkIntervalMinutes: number;
+  useRpcLimiter?: boolean;
 };
 
 export type CrewBidBotLogger = {
@@ -176,6 +180,59 @@ function sameLamports(a: number | null, b: number | null): boolean {
   return a === b;
 }
 
+class SharedRpcConnectionLimiter {
+  private readonly sharedLimiter = new RpcLimiter();
+  private readonly lastSharedWaitLogAtMs = new Map<string, number>();
+
+  constructor(
+    private readonly logger: CrewBidBotLogger,
+    private readonly useSharedLimiter: () => boolean
+  ) {}
+
+  async wait(label: string, bucketName: 'rpc:shared' | 'tx:shared' = 'rpc:shared'): Promise<void> {
+    if (!this.useSharedLimiter()) {
+      return;
+    }
+
+    const startedAt = Date.now();
+    await this.sharedLimiter.wait(bucketName, { label });
+    const waitMs = Date.now() - startedAt;
+    const logKey = `${bucketName}:${label}`;
+    const lastLoggedAt = this.lastSharedWaitLogAtMs.get(logKey) ?? 0;
+    const now = Date.now();
+    if (waitMs > RPC_LIMITER_SLOW_WAIT_LOG_MS && now - lastLoggedAt >= RPC_LIMITER_WAIT_LOG_THROTTLE_MS) {
+      const prefix = bucketName === 'tx:shared' ? 'TX limiter' : 'RPC limiter';
+      this.logger.info(`${prefix} waiting for ${label}.`);
+      this.lastSharedWaitLogAtMs.set(logKey, now);
+    }
+  }
+}
+
+function createLimitedConnection(
+  rpcUrl: string,
+  logger: CrewBidBotLogger,
+  useSharedLimiter: () => boolean
+): Connection {
+  const connection = new Connection(rpcUrl, { commitment: 'confirmed' });
+  const limiter = new SharedRpcConnectionLimiter(logger, useSharedLimiter);
+
+  return new Proxy(connection, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== 'function') {
+        return value;
+      }
+
+      return async (...args: unknown[]) => {
+        const label = `Connection.${String(prop)}()`;
+        const bucketName = prop === 'sendRawTransaction' ? 'tx:shared' : 'rpc:shared';
+        await limiter.wait(label, bucketName);
+        return value.apply(target, args);
+      };
+    }
+  }) as Connection;
+}
+
 function normalizeCheckIntervalMinutes(value: number | null | undefined): number {
   const numeric = Number(value);
   const maxTier = CHECK_INTERVAL_MINUTES_TIERS[CHECK_INTERVAL_MINUTES_TIERS.length - 1];
@@ -281,7 +338,11 @@ export class CrewBidBot {
         ? Keypair.fromSeed(secretKeyBytes)
         : Keypair.fromSecretKey(secretKeyBytes);
 
-    this.connection = new Connection(config.rpcUrl, { commitment: 'confirmed' });
+    this.connection = createLimitedConnection(
+      config.rpcUrl,
+      this.logger,
+      () => Boolean(this.config.useRpcLimiter)
+    );
 
     const provider = new AnchorProvider(
       this.connection,

@@ -10,6 +10,9 @@ const setupFields = [
   'AEPHIA_API_KEY',
   'RPC_URL',
   'HOT_WALLET_SECRET',
+  'RPC_REQUESTS_PER_SECOND',
+  'RPC_TX_SEND_RATE_LIMIT_PER_SECOND',
+  'USE_RPC_LIMITER',
   'COLLECTION_SLUG_UUID',
   'TARGET_ID',
   'MAKER_BROKER',
@@ -32,6 +35,10 @@ const startBtn = document.getElementById('start-btn');
 const stopBtn = document.getElementById('stop-btn');
 const mainActionFeedbackEl = document.getElementById('main-action-feedback');
 const toggleSensitiveBtn = document.getElementById('toggle-sensitive-btn');
+const sendRpcLimiterBtn = document.getElementById('send-rpc-limiter-btn');
+const rpcLimiterCurrentUrlEl = document.getElementById('rpc-limiter-current-url');
+const rpcLimiterStatePathEl = document.getElementById('rpc-limiter-state-path');
+const rpcLimiterUpdatedEl = document.getElementById('rpc-limiter-updated');
 const tabButtons = Array.from(document.querySelectorAll('.tab-button'));
 const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
 
@@ -240,7 +247,13 @@ function readFormConfig() {
   const data = {};
   for (const key of fields) {
     const element = mainForm.elements.namedItem(key) || form.elements.namedItem(key);
-    data[key] = element ? String(element.value ?? '').trim() : '';
+    if (!element) {
+      data[key] = '';
+    } else if (element.type === 'checkbox') {
+      data[key] = element.checked ? 'true' : 'false';
+    } else {
+      data[key] = String(element.value ?? '').trim();
+    }
   }
   const rows = getLimitOrderRowsFromDom();
   data.LIMIT_ORDERS = rows;
@@ -262,10 +275,46 @@ function writeFormConfig(config) {
   for (const key of fields) {
     const element = mainForm.elements.namedItem(key) || form.elements.namedItem(key);
     if (element) {
-      element.value = config[key] ?? '';
+      if (element.type === 'checkbox') {
+        element.checked = parseBoolean(config[key]);
+      } else {
+        element.value = config[key] ?? '';
+      }
     }
   }
   updateLimitOrderHints();
+  updateRpcLimiterModeTone();
+}
+
+function parseBoolean(value) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
+function updateRpcLimiterModeTone() {
+  const useRpcLimiter = parseBoolean(form.elements.namedItem('USE_RPC_LIMITER')?.checked ? 'true' : 'false');
+  form.classList.toggle('rpc-limiter-enabled', useRpcLimiter);
+  form.classList.toggle('rpc-limiter-disabled', !useRpcLimiter);
+}
+
+function renderRpcLimiterStatus(status) {
+  if (!status) {
+    rpcLimiterCurrentUrlEl.value = '';
+    rpcLimiterStatePathEl.textContent = '—';
+    rpcLimiterUpdatedEl.textContent = '';
+    return;
+  }
+
+  rpcLimiterCurrentUrlEl.value = status.currentRpcUrl || '';
+  rpcLimiterStatePathEl.textContent = status.path || '—';
+  const updatedParts = [];
+  if (status.updatedBy) {
+    updatedParts.push(`updated by ${status.updatedBy}`);
+  }
+  if (status.updatedAt) {
+    updatedParts.push(`at ${status.updatedAt}`);
+  }
+  rpcLimiterUpdatedEl.textContent = updatedParts.length ? updatedParts.join(' ') : '';
 }
 
 function appendLog(line) {
@@ -698,6 +747,7 @@ async function boot() {
 
   const settings = await window.botApi.getSettings();
   writeFormConfig(settings);
+  renderRpcLimiterStatus(await window.botApi.getRpcLimiterStatus());
   setSensitiveVisible(false);
   setRunning(false);
   setActiveTab('main');
@@ -736,6 +786,7 @@ saveBtn.addEventListener('click', async () => {
   try {
     const result = await window.botApi.saveSettings(readFormConfig());
     writeFormConfig(result);
+    renderRpcLimiterStatus(await window.botApi.getRpcLimiterStatus());
     appendLog(`[${new Date().toISOString()}] [INFO] Settings saved`);
     setMainActionFeedback('Settings saved.', 'success');
 
@@ -800,6 +851,21 @@ stopBtn.addEventListener('click', async () => {
 toggleSensitiveBtn.addEventListener('click', () => {
   setSensitiveVisible(!sensitiveVisible);
 });
+
+sendRpcLimiterBtn.addEventListener('click', async () => {
+  sendRpcLimiterBtn.disabled = true;
+  try {
+    const status = await window.botApi.sendSettingsToRpcLimiter(readFormConfig());
+    renderRpcLimiterStatus(status);
+    appendLog(`[${new Date().toISOString()}] [INFO] Sent settings to RPC Limiter`);
+  } catch (err) {
+    appendLog(`[${new Date().toISOString()}] [ERROR] ${err?.message || String(err)}`);
+  } finally {
+    sendRpcLimiterBtn.disabled = false;
+  }
+});
+
+form.elements.namedItem('USE_RPC_LIMITER')?.addEventListener('change', updateRpcLimiterModeTone);
 
 mainForm.elements.namedItem('SIDE')?.addEventListener('change', updateLimitOrderHints);
 

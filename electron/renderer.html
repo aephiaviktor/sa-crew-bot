@@ -21,7 +21,7 @@
                 Tensor
               </button>
               <button class="tab-button" id="tab-setup" type="button" data-tab="setup" role="tab" aria-selected="false">
-                Setup
+                Settings
               </button>
             </div>
 
@@ -66,8 +66,8 @@
 
             <section class="tab-panel" data-panel="setup" role="tabpanel" aria-labelledby="tab-setup">
               <div class="setup-toolbar">
-                <h2>Setup</h2>
-                <button id="toggle-sensitive-btn" type="button">Show Sensitive Fields</button>
+                <h2>Settings</h2>
+                <button id="toggle-sensitive-btn" class="sensitive-toggle" type="button">Show Sensitive Fields</button>
               </div>
 
               <form id="config-form" class="config-grid sensitive-hidden">
@@ -77,14 +77,45 @@
                 </label>
 
                 <label>
-                  RPC URL
-                  <input class="sensitive-field" name="RPC_URL" type="text" />
-                </label>
-
-                <label>
                   Hot Wallet Secret
                   <textarea class="sensitive-field" name="HOT_WALLET_SECRET" rows="3"></textarea>
                 </label>
+
+                <div class="config-wide rpc-limiter-toggle-row">
+                  <label class="checkbox-label">
+                    <input name="USE_RPC_LIMITER" type="checkbox" />
+                    Use RPC Limiter
+                  </label>
+                </div>
+
+                <section class="config-wide settings-subpanel rpc-limiter-panel">
+                  <label>
+                    Current RPC Limiter URL
+                    <input class="sensitive-field" id="rpc-limiter-current-url" type="text" readonly autocomplete="off" />
+                  </label>
+                  <div class="rpc-limiter-state-row">
+                    <span>State: <strong id="rpc-limiter-state-path">—</strong></span>
+                    <span class="rpc-limiter-updated" id="rpc-limiter-updated"></span>
+                  </div>
+                  <button id="send-rpc-limiter-btn" type="button">Send settings to RPC Limiter</button>
+                </section>
+
+                <section class="config-wide settings-subpanel rpc-send-settings-panel">
+                  <div class="config-grid nested-config-grid">
+                    <label class="config-wide">
+                      RPC URL
+                      <input class="sensitive-field" name="RPC_URL" type="text" autocomplete="off" />
+                    </label>
+                    <label>
+                      Requests / sec
+                      <input name="RPC_REQUESTS_PER_SECOND" type="text" autocomplete="off" />
+                    </label>
+                    <label>
+                      sendTransaction / sec
+                      <input name="RPC_TX_SEND_RATE_LIMIT_PER_SECOND" type="text" autocomplete="off" />
+                    </label>
+                  </div>
+                </section>
 
                 <div class="setup-accounts-grid">
                   <label>
