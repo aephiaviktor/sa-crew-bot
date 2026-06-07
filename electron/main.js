@@ -130,7 +130,7 @@ async function getUpdateState(fetchRemote) {
   const [currentCommit, remoteCommit, statusOutput] = await Promise.all([
     gitOutput(['rev-parse', 'HEAD']),
     gitOutput(['rev-parse', 'origin/main']),
-    gitOutput(['status', '--porcelain'])
+    gitOutput(['status', '--porcelain', '--untracked-files=no'])
   ]);
   const localPackage = await readLocalPackageJson();
   const remotePackage = await readRemotePackageJson();
@@ -788,7 +788,25 @@ ipcMain.handle('app:apply-update', async () => {
       stoppedBotForUpdate = true;
     }
 
-    await gitOutput(['pull', '--ff-only', 'origin', 'main'], { timeout: 120000 });
+    // Robust update flow: fetch, then either fast-forward or hard-reset to
+    // origin/main. The previous `git pull --ff-only` failed whenever the local
+    // branch had diverged from origin (e.g. after a force-push); for an
+    // auto-updater, the right semantic is to discard diverging local commits
+    // and sync to the remote. The reflog keeps them recoverable for ~30 days.
+    await gitOutput(['fetch', '--prune', 'origin', 'main'], { timeout: 120000 });
+    const localHead = (await gitOutput(['rev-parse', 'HEAD'])).trim();
+    const remoteHead = (await gitOutput(['rev-parse', 'origin/main'])).trim();
+    if (localHead !== remoteHead) {
+      const canFastForward = await gitOutput(['merge-base', '--is-ancestor', localHead, remoteHead])
+        .then(() => true)
+        .catch(() => false);
+      if (canFastForward) {
+        await gitOutput(['merge', '--ff-only', remoteHead]);
+      } else {
+        logger.warn(`Updater: local HEAD ${localHead} diverges from origin/main ${remoteHead}; resetting to remote.`);
+        await gitOutput(['reset', '--hard', remoteHead]);
+      }
+    }
     await runProjectCommand('npm', ['install'], { timeout: 240000, maxBuffer: 4 * 1024 * 1024 });
     await runProjectCommand('npm', ['run', 'build'], { timeout: 240000, maxBuffer: 4 * 1024 * 1024 });
 
