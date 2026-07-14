@@ -2,8 +2,8 @@ const { app, BrowserWindow, ipcMain, Menu, dialog, powerSaveBlocker } = require(
 const path = require('path');
 const fs = require('fs/promises');
 const fsSync = require('fs');
-const { execFile } = require('child_process');
-const { promisify } = require('util');
+const os = require('os');
+const { spawn } = require('child_process');
 const lockfile = require('proper-lockfile');
 const packageJson = require('../package.json');
 
@@ -49,11 +49,13 @@ let botRunning = false;
 let relaunchScheduled = false;
 
 const AEPHIA_TOKEN_VALIDATE_URL = 'https://api.aephia.com/token/validate';
+const GITHUB_REPO = 'aephiaviktor/sa-crew-bot';
+const GITHUB_MAIN_PACKAGE_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/package.json`;
+const GITHUB_MAIN_ARCHIVE_URL = `https://github.com/${GITHUB_REPO}/archive/refs/heads/main.tar.gz`;
 const APP_DISPLAY_NAME = 'SA Crew Bot';
 const APP_ROOT = path.join(__dirname, '..');
 const APP_USER_MODEL_ID = 'com.aephia.sa-crew-bot';
 const RPC_LIMITER_UPDATED_BY = 'SA Crew Bot';
-const execFileAsync = promisify(execFile);
 
 if (process.platform === 'win32') {
   app.setAppUserModelId(APP_USER_MODEL_ID);
@@ -152,105 +154,110 @@ function installCrashEventLogging() {
   });
 }
 
-function shortCommit(value) {
-  return String(value || '').trim().slice(0, 7) || 'unknown';
+function normalizeVersion(value) {
+  return String(value || '').trim().replace(/^v/i, '');
 }
 
 function compareVersions(left, right) {
-  const leftParts = String(left || '').split('.').map((part) => Number.parseInt(part, 10));
-  const rightParts = String(right || '').split('.').map((part) => Number.parseInt(part, 10));
+  const leftParts = normalizeVersion(left).split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const rightParts = normalizeVersion(right).split('.').map((part) => Number.parseInt(part, 10) || 0);
   const length = Math.max(leftParts.length, rightParts.length);
-
   for (let index = 0; index < length; index += 1) {
-    const leftPart = Number.isFinite(leftParts[index]) ? leftParts[index] : 0;
-    const rightPart = Number.isFinite(rightParts[index]) ? rightParts[index] : 0;
-    if (leftPart > rightPart) return 1;
-    if (leftPart < rightPart) return -1;
+    if ((leftParts[index] || 0) > (rightParts[index] || 0)) return 1;
+    if ((leftParts[index] || 0) < (rightParts[index] || 0)) return -1;
   }
-
   return 0;
 }
 
-async function runProjectCommand(command, args, options = {}) {
-  const result = await execFileAsync(command, args, {
-    cwd: APP_ROOT,
-    timeout: options.timeout || 120000,
-    maxBuffer: options.maxBuffer || 1024 * 1024
+async function fetchGithubJson(url) {
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'sa-crew-bot-updater'
+    }
   });
+  if (!response.ok) throw new Error(`GitHub request failed: HTTP ${response.status}`);
+  return await response.json();
+}
+
+async function getLatestGithubVersion() {
+  const remotePackage = await fetchGithubJson(GITHUB_MAIN_PACKAGE_URL);
+  const version = normalizeVersion(remotePackage?.version);
+  if (!version) throw new Error('No package version found on GitHub main.');
+  return { version, branch: 'main', tarballUrl: GITHUB_MAIN_ARCHIVE_URL };
+}
+
+async function getUpdateState() {
+  const currentVersion = packageJson.version || 'unknown';
+  const latest = await getLatestGithubVersion();
+  const versionUpdateAvailable = compareVersions(latest.version, currentVersion) > 0;
   return {
-    stdout: String(result.stdout || '').trim(),
-    stderr: String(result.stderr || '').trim()
+    currentVersion,
+    runtimeVersion: currentVersion,
+    localSourceVersion: currentVersion,
+    remoteVersion: latest.version,
+    updateAvailable: versionUpdateAvailable,
+    versionUpdateAvailable,
+    commitUpdateAvailable: false,
+    hasLocalChanges: false
   };
 }
 
-async function gitOutput(args, options) {
-  const result = await runProjectCommand('git', args, options);
-  return result.stdout;
+function runProjectCommand(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd || APP_ROOT,
+      shell: process.platform === 'win32',
+      windowsHide: true
+    });
+    let output = '';
+    child.stdout.on('data', (chunk) => { output += chunk.toString(); });
+    child.stderr.on('data', (chunk) => { output += chunk.toString(); });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolve(output);
+      else reject(new Error(`${command} ${args.join(' ')} failed with exit code ${code}: ${output.slice(-2000)}`));
+    });
+  });
+}
+
+async function downloadFile(url, targetPath) {
+  const response = await fetch(url, { headers: { 'User-Agent': 'sa-crew-bot-updater' } });
+  if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`);
+  await fs.writeFile(targetPath, Buffer.from(await response.arrayBuffer()));
 }
 
 function scheduleAppRelaunch() {
-  if (relaunchScheduled) {
-    return;
-  }
-
+  if (relaunchScheduled) return;
   relaunchScheduled = true;
-  setTimeout(() => {
-    app.relaunch();
-    app.exit(0);
-  }, 1200);
+  setTimeout(() => { app.relaunch(); app.exit(0); }, 1200);
 }
 
-async function readRemotePackageJson() {
-  try {
-    const raw = await gitOutput(['show', 'origin/main:package.json']);
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
+async function downloadUpdate() {
+  const latest = await getLatestGithubVersion();
+  const currentVersion = packageJson.version || 'unknown';
+  if (compareVersions(latest.version, currentVersion) <= 0) return false;
 
-async function readLocalPackageJson() {
-  try {
-    const raw = await fs.readFile(path.join(APP_ROOT, 'package.json'), 'utf8');
-    return JSON.parse(raw);
-  } catch {
-    return packageJson;
-  }
-}
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sa-crew-bot-update-'));
+  const archivePath = path.join(tempDir, 'main.tar.gz');
+  await downloadFile(latest.tarballUrl, archivePath);
+  await runProjectCommand('tar', ['-xzf', archivePath, '-C', tempDir], { cwd: tempDir });
+  const entries = await fs.readdir(tempDir, { withFileTypes: true });
+  const extracted = entries.find((entry) => entry.isDirectory() && entry.name.startsWith('sa-crew-bot-'));
+  if (!extracted) throw new Error('Downloaded update archive did not contain the expected project folder.');
 
-async function getUpdateState(fetchRemote) {
-  if (fetchRemote) {
-    await gitOutput(['fetch', '--prune', 'origin', 'main'], { timeout: 120000 });
-  }
-
-  const [currentCommit, remoteCommit, statusOutput] = await Promise.all([
-    gitOutput(['rev-parse', 'HEAD']),
-    gitOutput(['rev-parse', 'origin/main']),
-    gitOutput(['status', '--porcelain', '--untracked-files=no'])
-  ]);
-  const localPackage = await readLocalPackageJson();
-  const remotePackage = await readRemotePackageJson();
-  const runtimeVersion = packageJson.version || 'unknown';
-  const localSourceVersion = localPackage?.version || runtimeVersion;
-  const currentVersion = runtimeVersion;
-  const remoteVersion = remotePackage?.version || null;
-  const commitUpdateAvailable = currentCommit !== remoteCommit;
-  const versionUpdateAvailable = remoteVersion ? compareVersions(remoteVersion, currentVersion) > 0 : false;
-
-  return {
-    currentVersion,
-    runtimeVersion,
-    localSourceVersion,
-    remoteVersion,
-    currentCommit,
-    remoteCommit,
-    currentShortCommit: shortCommit(currentCommit),
-    remoteShortCommit: shortCommit(remoteCommit),
-    updateAvailable: versionUpdateAvailable || commitUpdateAvailable,
-    versionUpdateAvailable,
-    commitUpdateAvailable,
-    hasLocalChanges: statusOutput.length > 0
-  };
+  const extractedRoot = path.join(tempDir, extracted.name);
+  await fs.cp(extractedRoot, APP_ROOT, {
+    recursive: true,
+    force: true,
+    filter: (source) => {
+      const rel = path.relative(extractedRoot, source);
+      return !rel.startsWith('.git') && !rel.startsWith('node_modules') && !rel.startsWith('analysis');
+    }
+  });
+  await runProjectCommand('npm', ['install'], { cwd: APP_ROOT });
+  await runProjectCommand('npm', ['run', 'build'], { cwd: APP_ROOT });
+  return true;
 }
 
 function installApplicationMenu() {
@@ -849,92 +856,40 @@ ipcMain.handle('app:get-version', async () => {
 
 ipcMain.handle('app:check-update', async () => {
   try {
-    const state = await getUpdateState(true);
-    return {
-      ok: true,
-      ...state
-    };
+    return { ok: true, ...(await getUpdateState()) };
   } catch (err) {
-    return {
-      ok: false,
-      message: err?.message || String(err)
-    };
+    return { ok: false, message: err?.message || String(err) };
   }
 });
 
 ipcMain.handle('app:apply-update', async () => {
   let stoppedBotForUpdate = false;
   try {
-    const before = await getUpdateState(true);
-    if (!before.updateAvailable) {
-      return {
-        ok: true,
-        status: 'up_to_date',
-        ...before
-      };
-    }
-
-    if (before.hasLocalChanges) {
-      return {
-        ok: false,
-        status: 'local_changes',
-        message: 'Local source changes are present. Commit or stash them before updating.',
-        ...before
-      };
-    }
-
+    const before = await getUpdateState();
+    if (!before.updateAvailable) return { ok: true, status: 'up_to_date', ...before };
     if (botRunning) {
       await stopBot();
       stoppedBotForUpdate = true;
     }
-
-    // Robust update flow: fetch, then either fast-forward or hard-reset to
-    // origin/main. The previous `git pull --ff-only` failed whenever the local
-    // branch had diverged from origin (e.g. after a force-push); for an
-    // auto-updater, the right semantic is to discard diverging local commits
-    // and sync to the remote. The reflog keeps them recoverable for ~30 days.
-    await gitOutput(['fetch', '--prune', 'origin', 'main'], { timeout: 120000 });
-    const localHead = (await gitOutput(['rev-parse', 'HEAD'])).trim();
-    const remoteHead = (await gitOutput(['rev-parse', 'origin/main'])).trim();
-    if (localHead !== remoteHead) {
-      const canFastForward = await gitOutput(['merge-base', '--is-ancestor', localHead, remoteHead])
-        .then(() => true)
-        .catch(() => false);
-      if (canFastForward) {
-        await gitOutput(['merge', '--ff-only', remoteHead]);
-      } else {
-        logger.warn(`Updater: local HEAD ${localHead} diverges from origin/main ${remoteHead}; resetting to remote.`);
-        await gitOutput(['reset', '--hard', remoteHead]);
-      }
-    }
-    await runProjectCommand('npm', ['install'], { timeout: 240000, maxBuffer: 4 * 1024 * 1024 });
-    await runProjectCommand('npm', ['run', 'build'], { timeout: 240000, maxBuffer: 4 * 1024 * 1024 });
-
-    const after = await getUpdateState(false);
+    await downloadUpdate();
     scheduleAppRelaunch();
     return {
       ok: true,
       status: 'updated',
-      previousCommit: before.currentCommit,
-      previousShortCommit: before.currentShortCommit,
       stoppedBotForUpdate,
       relaunching: true,
-      ...after
+      currentVersion: before.remoteVersion,
+      remoteVersion: before.remoteVersion,
+      updateAvailable: false,
+      versionUpdateAvailable: false,
+      commitUpdateAvailable: false,
+      hasLocalChanges: false
     };
   } catch (err) {
     if (stoppedBotForUpdate) {
-      try {
-        await startBotFromSettings();
-      } catch (restartErr) {
-        logger.error('Bot restart after failed update failed:', restartErr);
-      }
+      try { await startBotFromSettings(); } catch (restartErr) { logger.error('Bot restart after failed update failed:', restartErr); }
     }
-
-    return {
-      ok: false,
-      status: 'error',
-      message: err?.message || String(err)
-    };
+    return { ok: false, status: 'error', message: err?.message || String(err) };
   }
 });
 
