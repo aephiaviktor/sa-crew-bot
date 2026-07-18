@@ -646,15 +646,27 @@ export class CrewBidBot {
       return false;
     }
 
-    if (sameLamports(current, target)) {
-      this.state.lastAction = `No change needed (${lamportsToSol(target)} SOL)`;
+    const currentQuantity = this.state.ownBidQuantity;
+    const priceChanged = !sameLamports(current, target);
+    const quantityChanged =
+      hasLiveOpenBid && currentQuantity != null && currentQuantity !== this.config.quantity;
+
+    if (!priceChanged && !quantityChanged) {
+      this.state.lastAction = `No change needed (${lamportsToSol(target)} SOL, quantity ${this.config.quantity})`;
       return false;
     }
 
     await this.sendBidUpdate(target);
 
     this.state.currentBidLamports = target;
-    this.state.lastAction = `Updated bid from ${lamportsToSol(current)} to ${lamportsToSol(target)} SOL`;
+    this.state.ownBidQuantity = this.config.quantity;
+
+    const changes = [
+      priceChanged ? `price ${lamportsToSol(current)} -> ${lamportsToSol(target)} SOL` : null,
+      quantityChanged ? `quantity ${currentQuantity} -> ${this.config.quantity}` : null
+    ].filter((change): change is string => change != null);
+
+    this.state.lastAction = `Updated bid: ${changes.join(', ')}`;
     this.state.lastUpdatedAt = new Date().toISOString();
     this.pushActivity('BID_UPDATED', this.state.lastAction);
 
