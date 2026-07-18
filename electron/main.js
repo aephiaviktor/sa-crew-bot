@@ -537,6 +537,7 @@ function normalizeLimitOrder(row, index, settings) {
     bidState: String(row?.bidState ?? row?.BID_STATE ?? fallback.BID_STATE ?? '').trim(),
     bidId: String(row?.bidId ?? row?.BID_ID ?? fallback.BID_ID ?? '').trim(),
     quantity: String(row?.quantity ?? row?.QUANTITY ?? fallback.QUANTITY ?? '10').trim(),
+    refillBelowQuantity: String(row?.refillBelowQuantity ?? row?.REFILL_BELOW_QUANTITY ?? '').trim(),
     maxBidSol: String(row?.maxBidSol ?? row?.MAX_BID_SOL ?? fallback.MAX_BID_SOL ?? '0.008').trim()
   };
 }
@@ -553,6 +554,7 @@ function normalizeSettings(settings) {
           bidState: normalized.BID_STATE,
           bidId: normalized.BID_ID,
           quantity: normalized.QUANTITY,
+          refillBelowQuantity: '',
           maxBidSol: normalized.MAX_BID_SOL
         }
       ];
@@ -593,6 +595,7 @@ async function persistBidIdentityFromStatus(status, rowId) {
 function makeBotConfig(s, row) {
   const order = normalizeLimitOrder(row || {}, 0, s);
   const quantity = Number(order.quantity);
+  const refillBelowQuantity = Number(order.refillBelowQuantity);
   const minRelevantBidQuantity = Number(s.MIN_RELEVANT_BID_QUANTITY);
 
   return {
@@ -609,6 +612,9 @@ function makeBotConfig(s, row) {
     bidId: order.bidId,
     marginAccount: s.MARGIN_ACCOUNT,
     quantity,
+    refillBelowQuantity: order.refillBelowQuantity !== '' && Number.isFinite(refillBelowQuantity) && refillBelowQuantity > 0
+      ? Math.floor(refillBelowQuantity)
+      : null,
     minRelevantBidQuantity: Number.isFinite(minRelevantBidQuantity) && minRelevantBidQuantity > 0 ? minRelevantBidQuantity : quantity,
     minBidSol: Number(s.MIN_BID_SOL),
     maxBidSol: Number(order.maxBidSol),

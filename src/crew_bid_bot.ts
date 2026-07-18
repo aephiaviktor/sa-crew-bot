@@ -36,6 +36,7 @@ export type CrewBidBotConfig = {
   marginAccount: string;
 
   quantity: number;
+  refillBelowQuantity: number | null;
   minRelevantBidQuantity: number;
 
   minBidSol: number;
@@ -647,23 +648,45 @@ export class CrewBidBot {
     }
 
     const currentQuantity = this.state.ownBidQuantity;
+    const filledQuantity = this.state.ownBidFilledQuantity ?? 0;
+    const remainingQuantity = currentQuantity == null
+      ? null
+      : Math.max(0, currentQuantity - filledQuantity);
+    const shouldRefill =
+      hasLiveOpenBid &&
+      this.config.refillBelowQuantity != null &&
+      remainingQuantity != null &&
+      remainingQuantity < this.config.refillBelowQuantity;
+    const fundableQuantity = shouldRefill ? this.computeFundableQtyForPrice(target) : null;
+    const refillFunded = shouldRefill && fundableQuantity != null && fundableQuantity >= this.config.quantity;
+    const requestedQuantity = this.config.refillBelowQuantity == null
+      ? this.config.quantity
+      : refillFunded
+        ? filledQuantity + this.config.quantity
+        : currentQuantity ?? this.config.quantity;
     const priceChanged = !sameLamports(current, target);
     const quantityChanged =
-      hasLiveOpenBid && currentQuantity != null && currentQuantity !== this.config.quantity;
+      hasLiveOpenBid && currentQuantity != null && currentQuantity !== requestedQuantity;
 
     if (!priceChanged && !quantityChanged) {
-      this.state.lastAction = `No change needed (${lamportsToSol(target)} SOL, quantity ${this.config.quantity})`;
+      this.state.lastAction = shouldRefill && !refillFunded
+        ? `Refill waiting: margin can fund ${fundableQuantity ?? 0}/${this.config.quantity}`
+        : `No change needed (${lamportsToSol(target)} SOL, quantity ${this.config.quantity})`;
       return false;
     }
 
-    await this.sendBidUpdate(target);
+    await this.sendBidUpdate(target, requestedQuantity);
 
     this.state.currentBidLamports = target;
-    this.state.ownBidQuantity = this.config.quantity;
+    this.state.ownBidQuantity = requestedQuantity;
 
     const changes = [
       priceChanged ? `price ${lamportsToSol(current)} -> ${lamportsToSol(target)} SOL` : null,
-      quantityChanged ? `quantity ${currentQuantity} -> ${this.config.quantity}` : null
+      quantityChanged
+        ? refillFunded
+          ? `quantity ${currentQuantity} -> ${requestedQuantity} (refilled remaining to ${this.config.quantity})`
+          : `quantity ${currentQuantity} -> ${requestedQuantity}`
+        : null
     ].filter((change): change is string => change != null);
 
     this.state.lastAction = `Updated bid: ${changes.join(', ')}`;
@@ -682,15 +705,11 @@ export class CrewBidBot {
       return [];
     }
 
-    const quantity = this.state.ownBidQuantity ?? this.config.quantity ?? null;
-    const remainingByFunding = this.computeFundableQtyForPrice(this.state.currentBidLamports);
-
-    const remainingCandidates = [
-      typeof quantity === 'number' ? Math.max(0, Math.floor(quantity)) : null,
-      remainingByFunding
-    ].filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
-
-    const remaining = remainingCandidates.length > 0 ? Math.max(0, Math.min(...remainingCandidates)) : quantity;
+    const onChainQuantity = this.state.ownBidQuantity ?? this.config.quantity ?? null;
+    const filledQuantity = this.state.ownBidFilledQuantity ?? 0;
+    const remaining = typeof onChainQuantity === 'number'
+      ? Math.max(0, Math.floor(onChainQuantity - filledQuantity))
+      : null;
 
     const isBestBid =
       this.config.side === 'buy' &&
@@ -703,7 +722,7 @@ export class CrewBidBot {
         label: 'Star Atlas Crew',
         side: this.config.side,
         priceLamports: this.state.currentBidLamports,
-        quantity,
+        quantity: this.config.quantity,
         remaining,
         bidState: this.state.ownBidAddress ?? this.config.bidState,
         bidId: this.config.bidId,
@@ -820,11 +839,11 @@ export class CrewBidBot {
     return signature;
   }
 
-  private async sendBidUpdate(limitBidLamports: number): Promise<void> {
+  private async sendBidUpdate(limitBidLamports: number, quantity = this.config.quantity): Promise<void> {
     const ownerPk = this.wallet.publicKey;
 
     this.logger.info(
-      `Sending Tensor bid update: amount=${limitBidLamports} estimatedFillSpend=${this.computeEstimatedFillSpendLamports(limitBidLamports)} royaltyFeeBps=${this.state.royaltyFeeBps ?? 0} quantity=${this.config.quantity} traits=${formatAttributesLabel(this.state.activeAttributes)}`
+      `Sending Tensor bid update: amount=${limitBidLamports} estimatedFillSpend=${this.computeEstimatedFillSpendLamports(limitBidLamports)} royaltyFeeBps=${this.state.royaltyFeeBps ?? 0} quantity=${quantity} traits=${formatAttributesLabel(this.state.activeAttributes)}`
     );
 
     const bidIdPk = publicKeyFromString(this.config.bidId, 'bidId');
@@ -843,7 +862,7 @@ export class CrewBidBot {
       bidId: bidIdPk,
       targetId: targetIdPk,
       target: Target.Whitelist,
-      quantity: this.config.quantity,
+      quantity,
       margin: marginPk,
       field: null,
       fieldId: null,

@@ -652,12 +652,15 @@ h3 {
 .limit-orders-table th:nth-child(4),
 .limit-orders-table td:nth-child(4),
 .limit-orders-table th:nth-child(5),
-.limit-orders-table td:nth-child(5) {
+.limit-orders-table td:nth-child(5),
+.limit-orders-table th:nth-child(6),
+.limit-orders-table td:nth-child(6) {
   width: 118px;
 }
 
 .limit-orders-table td:nth-child(4) .cell-stack,
-.limit-orders-table td:nth-child(5) .cell-stack {
+.limit-orders-table td:nth-child(5) .cell-stack,
+.limit-orders-table td:nth-child(6) .cell-stack {
   min-width: 118px;
 }
 

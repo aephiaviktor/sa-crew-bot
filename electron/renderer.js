@@ -88,6 +88,7 @@ function normalizeLimitOrderRow(row = {}) {
     bidState: String(row.bidState ?? row.BID_STATE ?? '').trim(),
     bidId: String(row.bidId ?? row.BID_ID ?? '').trim(),
     quantity: String(row.quantity ?? row.QUANTITY ?? '').trim(),
+    refillBelowQuantity: String(row.refillBelowQuantity ?? row.REFILL_BELOW_QUANTITY ?? '').trim(),
     maxBidSol: String(row.maxBidSol ?? row.MAX_BID_SOL ?? '').trim(),
     traitsLabel: String(row.traitsLabel ?? '').trim()
   };
@@ -115,6 +116,7 @@ function getLimitOrderRowsFromDom() {
       bidState: rowEl.querySelector('[data-field="bidState"]')?.value,
       bidId: rowEl.querySelector('[data-field="bidId"]')?.value,
       quantity: rowEl.querySelector('[data-field="quantity"]')?.value,
+      refillBelowQuantity: rowEl.querySelector('[data-field="refillBelowQuantity"]')?.value,
       maxBidSol: rowEl.querySelector('[data-field="maxBidSol"]')?.value,
       traitsLabel: rowEl.querySelector('[data-field="traitsLabel"]')?.textContent
     })
@@ -163,6 +165,12 @@ function renderLimitOrderRows(rows) {
         <div class="cell-stack">
           <input data-field="quantity" name="QUANTITY_${index}" type="number" value="${escapeHtml(row.quantity)}" />
           <span class="cell-hint" data-role="quantity-hint">Max buy quantity</span>
+        </div>
+      </td>
+      <td>
+        <div class="cell-stack">
+          <input data-field="refillBelowQuantity" name="REFILL_BELOW_QUANTITY_${index}" type="number" min="1" value="${escapeHtml(row.refillBelowQuantity)}" />
+          <span class="cell-hint">Refill trigger</span>
         </div>
       </td>
       <td>
