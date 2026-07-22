@@ -6,6 +6,7 @@ const os = require('os');
 const { spawn } = require('child_process');
 const lockfile = require('proper-lockfile');
 const packageJson = require('../package.json');
+const stableIcon = require('./lib/stable-icon');
 
 app.disableHardwareAcceleration();
 
@@ -61,8 +62,16 @@ if (process.platform === 'win32') {
   app.setAppUserModelId(APP_USER_MODEL_ID);
 }
 
+// Keep the Windows icon outside the app tree so updates cannot invalidate it.
+const WINDOW_ICON_STABLE = stableIcon.init({
+  appKey: 'sa-crew-bid-bot',
+  appUserModelId: APP_USER_MODEL_ID,
+  sourceIconPath: path.join(APP_ROOT, 'assets', 'sa_crew_bot_avatar.ico'),
+});
+
 function getWindowIconPath() {
-  return path.join(APP_ROOT, 'assets', process.platform === 'win32' ? 'sa_crew_bot_avatar.ico' : 'sa_crew_bot_avatar.png');
+  if (process.platform === 'win32') return WINDOW_ICON_STABLE;
+  return path.join(APP_ROOT, 'assets', 'sa_crew_bot_avatar.png');
 }
 
 function serializeCrashValue(value) {
@@ -749,9 +758,7 @@ function createWindow() {
     }
   });
 
-  if (typeof mainWindow.setIcon === 'function') {
-    mainWindow.setIcon(iconPath);
-  }
+  stableIcon.applyToWindow(mainWindow, iconPath);
   attachWindowCrashLogging(mainWindow);
 
   mainWindow.loadFile(path.join(__dirname, 'renderer.html'));
