@@ -49,6 +49,20 @@ let botEntries = [];
 let botRunning = false;
 let relaunchScheduled = false;
 
+// Never allow two automation instances to operate on the same settings/wallet.
+// A second launch (manual, Startup, or scheduled task) focuses the existing app.
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.exit(0);
+}
+
+app.on('second-instance', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
+
 const AEPHIA_TOKEN_VALIDATE_URL = 'https://api.aephia.com/token/validate';
 const GITHUB_REPO = 'aephiaviktor/sa-crew-bot';
 const GITHUB_MAIN_PACKAGE_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/package.json`;
@@ -239,7 +253,11 @@ async function downloadFile(url, targetPath) {
 function scheduleAppRelaunch() {
   if (relaunchScheduled) return;
   relaunchScheduled = true;
-  setTimeout(() => { app.relaunch(); app.exit(0); }, 1200);
+
+  // Exit as a failure so the Windows supervisor remains the sole owner of
+  // process restarts. app.relaunch() would create an unsupervised process and
+  // let a later scheduled-task launch start a duplicate automation instance.
+  setTimeout(() => app.exit(1), 1200);
 }
 
 async function downloadUpdate() {
