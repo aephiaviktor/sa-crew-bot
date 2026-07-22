@@ -6,6 +6,7 @@ const os = require('os');
 const { spawn } = require('child_process');
 const lockfile = require('proper-lockfile');
 const packageJson = require('../package.json');
+const { dependencyInstallRequired } = require('./update-dependencies');
 const stableIcon = require('./lib/stable-icon');
 
 app.disableHardwareAcceleration();
@@ -68,6 +69,7 @@ const GITHUB_REPO = 'aephiaviktor/sa-crew-bot';
 const GITHUB_MAIN_PACKAGE_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/package.json`;
 const GITHUB_MAIN_ARCHIVE_URL = `https://github.com/${GITHUB_REPO}/archive/refs/heads/main.tar.gz`;
 const APP_DISPLAY_NAME = 'SA Crew Bot';
+const RESTART_TASK_NAME = 'SA Crew Bot';
 const APP_ROOT = path.join(__dirname, '..');
 const APP_USER_MODEL_ID = 'com.aephia.sa-crew-bot';
 const RPC_LIMITER_UPDATED_BY = 'SA Crew Bot';
@@ -250,14 +252,31 @@ async function downloadFile(url, targetPath) {
   await fs.writeFile(targetPath, Buffer.from(await response.arrayBuffer()));
 }
 
-function scheduleAppRelaunch() {
+function scheduleAppRelaunch(expectedVersion) {
   if (relaunchScheduled) return;
   relaunchScheduled = true;
 
-  // Exit as a failure so the Windows supervisor remains the sole owner of
-  // process restarts. app.relaunch() would create an unsupervised process and
-  // let a later scheduled-task launch start a duplicate automation instance.
-  setTimeout(() => app.exit(1), 1200);
+  const restartHelper = spawn(process.execPath, [
+    path.join(__dirname, 'restart-helper.js'),
+    String(process.pid),
+    RESTART_TASK_NAME,
+    APP_DISPLAY_NAME,
+    expectedVersion,
+    APP_ROOT,
+    path.join(__dirname, 'restart-status.ps1'),
+    path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'SACrewBot', 'logs', 'supervisor.log'),
+  ], {
+    cwd: APP_ROOT,
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+  });
+  restartHelper.unref();
+
+  // A clean exit lets the supervisor task become Ready. The detached helper
+  // then starts that canonical task and verifies a visible replacement window.
+  setTimeout(() => app.exit(0), 1200);
 }
 
 async function downloadUpdate() {
@@ -274,6 +293,9 @@ async function downloadUpdate() {
   if (!extracted) throw new Error('Downloaded update archive did not contain the expected project folder.');
 
   const extractedRoot = path.join(tempDir, extracted.name);
+  const currentLockText = await fs.readFile(path.join(APP_ROOT, 'package-lock.json'), 'utf8').catch(() => null);
+  const nextLockText = await fs.readFile(path.join(extractedRoot, 'package-lock.json'), 'utf8').catch(() => null);
+  const shouldInstallDependencies = dependencyInstallRequired(currentLockText, nextLockText);
   await fs.cp(extractedRoot, APP_ROOT, {
     recursive: true,
     force: true,
@@ -282,7 +304,9 @@ async function downloadUpdate() {
       return !rel.startsWith('.git') && !rel.startsWith('node_modules') && !rel.startsWith('analysis');
     }
   });
-  await runProjectCommand('npm', ['install'], { cwd: APP_ROOT });
+  if (shouldInstallDependencies) {
+    await runProjectCommand('npm', ['install'], { cwd: APP_ROOT });
+  }
   await runProjectCommand('npm', ['run', 'build'], { cwd: APP_ROOT });
   return true;
 }
@@ -903,7 +927,7 @@ ipcMain.handle('app:apply-update', async () => {
       stoppedBotForUpdate = true;
     }
     await downloadUpdate();
-    scheduleAppRelaunch();
+    scheduleAppRelaunch(before.remoteVersion);
     return {
       ok: true,
       status: 'updated',
