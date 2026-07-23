@@ -520,12 +520,25 @@ function setListCount(element, count) {
   element.textContent = String(count ?? 0);
 }
 
+function appendElement(parent, tagName, className, text) {
+  const element = document.createElement(tagName);
+  if (className) element.className = className;
+  if (text !== undefined) element.textContent = String(text);
+  parent.appendChild(element);
+  return element;
+}
+
+function renderEmptyState(parent, message) {
+  parent.replaceChildren();
+  appendElement(parent, 'div', 'empty-state', message);
+}
+
 function renderOpenOrders(orders) {
-  openOrdersListEl.innerHTML = '';
+  openOrdersListEl.replaceChildren();
   setListCount(openOrdersCountEl, orders.length);
 
   if (!orders.length) {
-    openOrdersListEl.innerHTML = '<div class="empty-state">No open orders</div>';
+    renderEmptyState(openOrdersListEl, 'No open orders');
     return;
   }
 
@@ -536,29 +549,24 @@ function renderOpenOrders(orders) {
     const quantityLabel = typeof order.quantity === 'number' ? formatNumber(order.quantity, 0) : '—';
     const remainingLabel = typeof order.remaining === 'number' ? formatNumber(order.remaining, 0) : quantityLabel;
 
-    item.innerHTML = `
-      <div class="status-item-top">
-        <div class="order-left">
-          <span class="order-asset">${order.label || 'Crew Bid'}</span>
-          <span class="badge ${order.side === 'sell' ? 'sell' : 'buy'}">${order.side || 'buy'}</span>
-          ${order.marketLeader === 'bb' ? '<span class="badge leader">BB</span>' : ''}
-        </div>
-        <div class="order-right">
-          <span class="order-metric">
-            <span class="order-metric-label">Price</span>
-            <span>${formatLamportsToSol(order.priceLamports)}</span>
-          </span>
-          <span class="order-metric">
-            <span class="order-metric-label">Qty</span>
-            <span>${remainingLabel} / ${quantityLabel}</span>
-          </span>
-        </div>
-      </div>
-      <div class="status-item-row">
-        <span class="status-item-subtle">Order</span>
-        <span class="status-item-value">${order.bidState || order.bidId || '—'}</span>
-      </div>
-    `;
+    const top = appendElement(item, 'div', 'status-item-top');
+    const left = appendElement(top, 'div', 'order-left');
+    appendElement(left, 'span', 'order-asset', order.label || 'Crew Bid');
+    const side = order.side === 'sell' ? 'sell' : 'buy';
+    appendElement(left, 'span', `badge ${side}`, side);
+    if (order.marketLeader === 'bb') appendElement(left, 'span', 'badge leader', 'BB');
+
+    const right = appendElement(top, 'div', 'order-right');
+    const price = appendElement(right, 'span', 'order-metric');
+    appendElement(price, 'span', 'order-metric-label', 'Price');
+    appendElement(price, 'span', '', formatLamportsToSol(order.priceLamports));
+    const quantity = appendElement(right, 'span', 'order-metric');
+    appendElement(quantity, 'span', 'order-metric-label', 'Qty');
+    appendElement(quantity, 'span', '', `${remainingLabel} / ${quantityLabel}`);
+
+    const row = appendElement(item, 'div', 'status-item-row');
+    appendElement(row, 'span', 'status-item-subtle', 'Order');
+    appendElement(row, 'span', 'status-item-value', order.bidState || order.bidId || '—');
 
     openOrdersListEl.appendChild(item);
   }
@@ -582,26 +590,26 @@ function getActivityTone(entry) {
 
 function getActivityBadge(entry) {
   if (entry.event === 'FILLED') {
-    return '<span class="badge activity-badge filled">FILLED</span>';
+    return { className: 'filled', label: 'FILLED' };
   }
   if (entry.event === 'START') {
-    return '<span class="badge activity-badge start">START</span>';
+    return { className: 'start', label: 'START' };
   }
   if (entry.event === 'MARGIN_LOW') {
-    return '<span class="badge activity-badge margin-low">MARGIN LOW</span>';
+    return { className: 'margin-low', label: 'MARGIN LOW' };
   }
   if (entry.event === 'MARGIN_EMPTY') {
-    return '<span class="badge activity-badge margin-empty">MARGIN EMPTY</span>';
+    return { className: 'margin-empty', label: 'MARGIN EMPTY' };
   }
-  return '';
+  return null;
 }
 
 function renderRecentActivity(items) {
-  recentActivityListEl.innerHTML = '';
+  recentActivityListEl.replaceChildren();
   setListCount(recentActivityCountEl, items.length);
 
   if (!items.length) {
-    recentActivityListEl.innerHTML = '<div class="empty-state">No recent activity</div>';
+    renderEmptyState(recentActivityListEl, 'No recent activity');
     return;
   }
 
@@ -610,24 +618,20 @@ function renderRecentActivity(items) {
     const item = document.createElement('div');
     item.className = `status-item activity-item activity-item-${tone}`;
 
-    item.innerHTML = `
-      <div class="status-item-top">
-        <div class="activity-left">
-          <span class="activity-title">${entry.title || entry.event || 'Activity'}</span>
-          ${getActivityBadge(entry)}
-        </div>
-        <div class="activity-right">
-          <span class="activity-metric">
-            <span class="activity-metric-label">At</span>
-            <span>${formatTimestamp(entry.timestamp)}</span>
-          </span>
-        </div>
-      </div>
-      <div class="status-item-row">
-        <span class="status-item-subtle">Details</span>
-        <span class="status-item-value">${entry.message || '—'}</span>
-      </div>
-    `;
+    const top = appendElement(item, 'div', 'status-item-top');
+    const left = appendElement(top, 'div', 'activity-left');
+    appendElement(left, 'span', 'activity-title', entry.title || entry.event || 'Activity');
+    const badge = getActivityBadge(entry);
+    if (badge) appendElement(left, 'span', `badge activity-badge ${badge.className}`, badge.label);
+
+    const right = appendElement(top, 'div', 'activity-right');
+    const metric = appendElement(right, 'span', 'activity-metric');
+    appendElement(metric, 'span', 'activity-metric-label', 'At');
+    appendElement(metric, 'span', '', formatTimestamp(entry.timestamp));
+
+    const row = appendElement(item, 'div', 'status-item-row');
+    appendElement(row, 'span', 'status-item-subtle', 'Details');
+    appendElement(row, 'span', 'status-item-value', entry.message || '—');
 
     recentActivityListEl.appendChild(item);
   }
@@ -863,7 +867,12 @@ toggleSensitiveBtn.addEventListener('click', () => {
 sendRpcLimiterBtn.addEventListener('click', async () => {
   sendRpcLimiterBtn.disabled = true;
   try {
-    const status = await window.botApi.sendSettingsToRpcLimiter(readFormConfig());
+    const config = readFormConfig();
+    const status = await window.botApi.sendSettingsToRpcLimiter({
+      RPC_URL: config.RPC_URL,
+      RPC_REQUESTS_PER_SECOND: config.RPC_REQUESTS_PER_SECOND,
+      RPC_TX_SEND_RATE_LIMIT_PER_SECOND: config.RPC_TX_SEND_RATE_LIMIT_PER_SECOND
+    });
     renderRpcLimiterStatus(status);
     appendLog(`[${new Date().toISOString()}] [INFO] Sent settings to RPC Limiter`);
   } catch (err) {

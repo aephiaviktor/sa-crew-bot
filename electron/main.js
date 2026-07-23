@@ -8,6 +8,13 @@ const lockfile = require('proper-lockfile');
 const packageJson = require('../package.json');
 const { dependencyInstallRequired } = require('./update-dependencies');
 const stableIcon = require('./lib/stable-icon');
+const { atomicWriteFile } = require('./lib/atomic-write');
+const {
+  assertTrustedIpcEvent,
+  validateCancelBidPayload,
+  validateRpcLimiterPayload,
+  validateSettingsPayload,
+} = require('./lib/ipc-security');
 
 app.disableHardwareAcceleration();
 
@@ -555,8 +562,7 @@ async function loadSettings() {
 
 async function saveSettings(payload) {
   const merged = normalizeSettings({ ...(await loadSettings()), ...(payload || {}) });
-  await fs.mkdir(path.dirname(settingsPath()), { recursive: true });
-  await fs.writeFile(settingsPath(), JSON.stringify(merged, null, 2), 'utf8');
+  await atomicWriteFile(settingsPath(), JSON.stringify(merged, null, 2), 'utf8');
   return merged;
 }
 
@@ -808,21 +814,30 @@ function createWindow() {
 
 installCrashEventLogging();
 
-ipcMain.handle('settings:get', async () => {
+const rendererPath = path.join(__dirname, 'renderer.html');
+
+function handleTrustedIpc(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    assertTrustedIpcEvent(event, rendererPath);
+    return handler(...args);
+  });
+}
+
+handleTrustedIpc('settings:get', async () => {
   return await loadSettings();
 });
 
-ipcMain.handle('settings:save', async (_event, payload) => {
-  return await saveSettings(payload);
+handleTrustedIpc('settings:save', async (payload) => {
+  return await saveSettings(validateSettingsPayload(payload));
 });
 
-ipcMain.handle('rpc-limiter:get-status', async () => getRpcLimiterStatus());
+handleTrustedIpc('rpc-limiter:get-status', async () => getRpcLimiterStatus());
 
-ipcMain.handle('rpc-limiter:send-settings', async (_event, payload) => {
-  return await sendSettingsToRpcLimiter(payload || {});
+handleTrustedIpc('rpc-limiter:send-settings', async (payload) => {
+  return await sendSettingsToRpcLimiter(validateRpcLimiterPayload(payload));
 });
 
-ipcMain.handle('bot:start', async () => {
+handleTrustedIpc('bot:start', async () => {
   try {
     await startBotFromSettings();
     return { ok: true, running: botRunning };
@@ -842,12 +857,12 @@ ipcMain.handle('bot:start', async () => {
   }
 });
 
-ipcMain.handle('bot:stop', async () => {
+handleTrustedIpc('bot:stop', async () => {
   await stopBot();
   return { running: botRunning };
 });
 
-ipcMain.handle('bot:apply-settings-now', async () => {
+handleTrustedIpc('bot:apply-settings-now', async () => {
   if (!botEntries.length || !botRunning) {
     return { ok: false, status: 'bot_not_running' };
   }
@@ -860,11 +875,12 @@ ipcMain.handle('bot:apply-settings-now', async () => {
   return { ok: true, status: 'applied' };
 });
 
-ipcMain.handle('bot:get-status', async () => {
+handleTrustedIpc('bot:get-status', async () => {
   return await getCombinedBotStatus();
 });
 
-ipcMain.handle('bot:cancel-bid', async (_event, rowId) => {
+handleTrustedIpc('bot:cancel-bid', async (rowId) => {
+  rowId = validateCancelBidPayload(rowId);
   if (!botEntries.length || !botRunning) {
     return {
       ok: false,
@@ -903,13 +919,13 @@ ipcMain.handle('bot:cancel-bid', async (_event, rowId) => {
   }
 });
 
-ipcMain.handle('app:get-version', async () => {
+handleTrustedIpc('app:get-version', async () => {
   return {
     version: packageJson.version || 'unknown'
   };
 });
 
-ipcMain.handle('app:check-update', async () => {
+handleTrustedIpc('app:check-update', async () => {
   try {
     return { ok: true, ...(await getUpdateState()) };
   } catch (err) {
@@ -917,7 +933,7 @@ ipcMain.handle('app:check-update', async () => {
   }
 });
 
-ipcMain.handle('app:apply-update', async () => {
+handleTrustedIpc('app:apply-update', async () => {
   let stoppedBotForUpdate = false;
   try {
     const before = await getUpdateState();
