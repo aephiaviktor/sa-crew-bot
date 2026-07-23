@@ -4,13 +4,14 @@ param(
     [Parameter(Mandatory = $true)][string]$AppRoot,
     [Parameter(Mandatory = $true)][string]$TaskName,
     [Parameter(Mandatory = $true)][string]$LogPath,
-    [int]$SlowThresholdSeconds = 20,
-    [int]$FailureThresholdSeconds = 90
+    [Parameter(Mandatory = $true)][string]$RollbackRoot,
+    [Parameter(Mandatory = $true)][long]$DeadlineEpochMs
 )
 
 $ErrorActionPreference = 'SilentlyContinue'
 $startedAt = Get-Date
 $normalizedRoot = [IO.Path]::GetFullPath($AppRoot).TrimEnd('\')
+$deadline = [DateTimeOffset]::FromUnixTimeMilliseconds($DeadlineEpochMs).LocalDateTime
 
 function Get-VisibleAppProcess {
     $candidates = Get-CimInstance Win32_Process -Filter "Name = 'electron.exe'" | Where-Object {
@@ -26,9 +27,47 @@ function Get-VisibleAppProcess {
     return $null
 }
 
-while (((Get-Date) - $startedAt).TotalSeconds -lt $SlowThresholdSeconds) {
-    if (Get-VisibleAppProcess) { exit 0 }
+function Test-ExpectedVersion {
+    try {
+        $package = Get-Content (Join-Path $AppRoot 'package.json') -Raw | ConvertFrom-Json
+        return [string]$package.version -eq $ExpectedVersion
+    } catch { return $false }
+}
+
+while ((Get-Date) -lt $deadline) {
+    if ((Get-VisibleAppProcess) -and (Test-ExpectedVersion)) { exit 0 }
     Start-Sleep -Milliseconds 500
+}
+
+$rollbackAttempted = $false
+$rollbackSucceeded = $false
+if (Test-Path $RollbackRoot) {
+    $rollbackAttempted = $true
+    & schtasks.exe /End /TN $TaskName 2>$null | Out-Null
+    Get-CimInstance Win32_Process -Filter "Name = 'electron.exe'" | Where-Object {
+        $_.CommandLine -and $_.CommandLine.IndexOf($normalizedRoot, [StringComparison]::OrdinalIgnoreCase) -ge 0
+    } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Milliseconds 750
+
+    $failedRoot = "$AppRoot.failed-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))"
+    try {
+        $currentNodeModules = Join-Path $AppRoot 'node_modules'
+        $rollbackNodeModules = Join-Path $RollbackRoot 'node_modules'
+        if ((Test-Path $currentNodeModules) -and -not (Test-Path $rollbackNodeModules)) {
+            Move-Item -LiteralPath $currentNodeModules -Destination $rollbackNodeModules -Force
+        }
+        $currentAnalysis = Join-Path $AppRoot 'analysis'
+        $rollbackAnalysis = Join-Path $RollbackRoot 'analysis'
+        if ((Test-Path $currentAnalysis) -and -not (Test-Path $rollbackAnalysis)) {
+            Move-Item -LiteralPath $currentAnalysis -Destination $rollbackAnalysis -Force
+        }
+        Move-Item -LiteralPath $AppRoot -Destination $failedRoot
+        Move-Item -LiteralPath $RollbackRoot -Destination $AppRoot
+        $rollbackSucceeded = $true
+        & schtasks.exe /Run /TN $TaskName 2>$null | Out-Null
+    } catch {
+        $rollbackSucceeded = $false
+    }
 }
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -47,7 +86,7 @@ $title = New-Object Windows.Forms.Label
 $title.Location = New-Object Drawing.Point(20, 18)
 $title.Size = New-Object Drawing.Size(420, 28)
 $title.Font = New-Object Drawing.Font('Segoe UI', 12, [Drawing.FontStyle]::Bold)
-$title.Text = "$AppName is taking longer than expected to restart"
+$title.Text = if ($rollbackSucceeded) { "$AppName update was rolled back" } else { "$AppName could not restart" }
 $form.Controls.Add($title)
 
 $status = New-Object Windows.Forms.Label
@@ -88,11 +127,12 @@ $timer.Add_Tick({
         return
     }
     $elapsed = [Math]::Floor(((Get-Date) - $startedAt).TotalSeconds)
-    if ($elapsed -ge $FailureThresholdSeconds) {
-        $title.Text = "$AppName could not restart"
-        $status.Text = "Expected version $ExpectedVersion. No visible, responding app window appeared after $elapsed seconds."
+    if ($rollbackSucceeded) {
+        $status.Text = "Version $ExpectedVersion did not start within the 30-second update budget. The previous version was restored."
+    } elseif ($rollbackAttempted) {
+        $status.Text = "Version $ExpectedVersion did not start, and automatic rollback failed. Open the log for details."
     } else {
-        $status.Text = "Waiting for version $ExpectedVersion to open... ($elapsed seconds)"
+        $status.Text = "Version $ExpectedVersion did not start, and no rollback copy was available."
     }
 })
 $timer.Start()

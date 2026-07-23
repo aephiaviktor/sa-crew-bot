@@ -1,12 +1,14 @@
 const { spawn } = require('child_process');
+const { performAtomicSwap } = require('./atomic-update');
 
 function parseRestartArguments(argv) {
   const args = argv.slice(2);
   const parentPid = Number.parseInt(args[0], 10);
-  const [, taskName, appName, expectedVersion, appRoot, verifierPath, logPath] = args;
-  if (!Number.isInteger(parentPid) || args.length < 7) return null;
-  if (!taskName || !appName || !expectedVersion || !appRoot || !verifierPath || !logPath) return null;
-  return { parentPid, taskName, appName, expectedVersion, appRoot, verifierPath, logPath };
+  const [, taskName, appName, expectedVersion, appRoot, verifierPath, logPath, stagedRoot, rollbackRoot, deadlineText] = args;
+  const deadlineEpochMs = Number.parseInt(deadlineText, 10);
+  if (!Number.isInteger(parentPid) || args.length < 10 || !Number.isFinite(deadlineEpochMs)) return null;
+  if (!taskName || !appName || !expectedVersion || !appRoot || !verifierPath || !logPath || !stagedRoot || !rollbackRoot) return null;
+  return { parentPid, taskName, appName, expectedVersion, appRoot, verifierPath, logPath, stagedRoot, rollbackRoot, deadlineEpochMs };
 }
 
 function sleep(ms) {
@@ -57,9 +59,11 @@ function launchVerifier(options, spawnProcess = spawn) {
       '-AppRoot', options.appRoot,
       '-TaskName', options.taskName,
       '-LogPath', options.logPath,
+      '-RollbackRoot', options.rollbackRoot,
+      '-DeadlineEpochMs', String(options.deadlineEpochMs),
     ],
     {
-      cwd: options.appRoot,
+      cwd: require('node:path').dirname(options.appRoot),
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
@@ -73,18 +77,28 @@ async function launchAfterTaskReady(options) {
     taskName,
     taskPollIntervalMs = 250,
     taskReadyWaitMs = 300_000,
+    deadlineEpochMs = Number.POSITIVE_INFINITY,
     getScheduledTaskState: readTaskState = getScheduledTaskState,
     runScheduledTask: startTask = runScheduledTask,
     launchVerifier: startVerifier = launchVerifier,
+    performAtomicSwap: swapRelease = performAtomicSwap,
   } = options;
 
   const taskDeadline = Date.now() + taskReadyWaitMs;
   while (await readTaskState(taskName) !== 3) {
-    if (Date.now() >= taskDeadline) {
+    if (Date.now() >= Math.min(taskDeadline, deadlineEpochMs)) {
       startVerifier(options);
       return false;
     }
     await sleep(taskPollIntervalMs);
+  }
+
+  try {
+    await swapRelease(options);
+  } catch {
+    await startTask(taskName).catch(() => false);
+    startVerifier({ ...options, rollbackRoot: `${options.rollbackRoot}.unavailable` });
+    return false;
   }
 
   if (!await startTask(taskName)) {
@@ -97,13 +111,16 @@ async function launchAfterTaskReady(options) {
 
 async function main() {
   const restartOptions = parseRestartArguments(process.argv);
-  if (!restartOptions) process.exit(2);
+  if (!restartOptions) {
+    process.exitCode = 2;
+    return;
+  }
   const launched = await launchAfterTaskReady(restartOptions);
-  process.exit(launched ? 0 : 3);
+  process.exitCode = launched ? 0 : 3;
 }
 
 if (require.main === module) {
-  void main().catch(() => process.exit(1));
+  void main().catch(() => { process.exitCode = 1; });
 }
 
 module.exports = {

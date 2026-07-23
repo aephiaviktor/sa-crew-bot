@@ -8,7 +8,7 @@ test('restart helper accepts the supervisor-aware argument contract', () => {
   const parsed = parseRestartArguments([
     'electron.exe', 'restart-helper.js', '123', 'SA Crew Bot', 'SA Crew Bot', '0.2.12',
     'C:\\Apps\\sa-crew-bid-bot', 'C:\\Apps\\sa-crew-bid-bot\\electron\\restart-status.ps1',
-    'C:\\logs\\supervisor.log',
+    'C:\\logs\\supervisor.log', 'C:\\Apps\\.sa-stage', 'C:\\Apps\\.sa-rollback', '2000000000000',
   ]);
 
   assert.deepEqual(parsed, {
@@ -19,6 +19,9 @@ test('restart helper accepts the supervisor-aware argument contract', () => {
     appRoot: 'C:\\Apps\\sa-crew-bid-bot',
     verifierPath: 'C:\\Apps\\sa-crew-bid-bot\\electron\\restart-status.ps1',
     logPath: 'C:\\logs\\supervisor.log',
+    stagedRoot: 'C:\\Apps\\.sa-stage',
+    rollbackRoot: 'C:\\Apps\\.sa-rollback',
+    deadlineEpochMs: 2000000000000,
   });
 });
 
@@ -52,11 +55,12 @@ test('restart helper waits for Ready, starts the task, then launches the verifie
       return state;
     },
     runScheduledTask: async () => { events.push('run'); return true; },
+    performAtomicSwap: async () => { events.push('swap'); },
     launchVerifier: () => { events.push('verify'); },
   });
 
   assert.equal(launched, true);
-  assert.deepEqual(events, ['state:4', 'state:4', 'state:3', 'run', 'verify']);
+  assert.deepEqual(events, ['state:4', 'state:4', 'state:3', 'swap', 'run', 'verify']);
 });
 
 test('restart helper launches failure verification if Ready never arrives', async () => {
@@ -66,6 +70,7 @@ test('restart helper launches failure verification if Ready never arrives', asyn
     taskReadyWaitMs: 0,
     getScheduledTaskState: async () => 4,
     runScheduledTask: async () => { throw new Error('task must not start'); },
+    performAtomicSwap: async () => { throw new Error('swap must not run'); },
     launchVerifier: () => { verifierStarted = true; },
   });
 
@@ -79,9 +84,25 @@ test('restart helper launches failure verification if the task cannot start', as
     taskName: 'SA Crew Bot',
     getScheduledTaskState: async () => 3,
     runScheduledTask: async () => false,
+    performAtomicSwap: async () => undefined,
     launchVerifier: () => { verifierStarted = true; },
   });
 
   assert.equal(launched, false);
   assert.equal(verifierStarted, true);
+});
+
+test('restart helper restarts the unchanged app without rollback when atomic swap fails', async () => {
+  const events = [];
+  const launched = await launchAfterTaskReady({
+    taskName: 'SA Crew Bot',
+    rollbackRoot: 'C:\\Apps\\rollback',
+    getScheduledTaskState: async () => 3,
+    performAtomicSwap: async () => { throw new Error('swap failed'); },
+    runScheduledTask: async () => { events.push('run-old'); return true; },
+    launchVerifier: (options) => { events.push(options.rollbackRoot); },
+  });
+
+  assert.equal(launched, false);
+  assert.deepEqual(events, ['run-old', 'C:\\Apps\\rollback.unavailable']);
 });

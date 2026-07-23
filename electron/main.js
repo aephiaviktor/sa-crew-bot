@@ -2,11 +2,11 @@ const { app, BrowserWindow, ipcMain, Menu, dialog, powerSaveBlocker } = require(
 const path = require('path');
 const fs = require('fs/promises');
 const fsSync = require('fs');
-const os = require('os');
 const { spawn } = require('child_process');
 const lockfile = require('proper-lockfile');
 const packageJson = require('../package.json');
 const { dependencyInstallRequired } = require('./update-dependencies');
+const { validateStagedRelease } = require('./atomic-update');
 const stableIcon = require('./lib/stable-icon');
 const { atomicWriteFile } = require('./lib/atomic-write');
 const { normalizeOrderPrices, parseOrderPriceRange } = require('./lib/order-price-limits');
@@ -80,6 +80,22 @@ const RESTART_TASK_NAME = 'SA Crew Bot';
 const APP_ROOT = path.join(__dirname, '..');
 const APP_USER_MODEL_ID = 'com.aephia.sa-crew-bot';
 const RPC_LIMITER_UPDATED_BY = 'SA Crew Bot';
+const UPDATE_TOTAL_BUDGET_MS = 30_000;
+const UPDATE_RESTART_RESERVE_MS = 8_000;
+
+async function cleanupStaleUpdateDirectories() {
+  const parentDir = path.dirname(APP_ROOT);
+  const appName = path.basename(APP_ROOT);
+  const entries = await fs.readdir(parentDir, { withFileTypes: true }).catch(() => []);
+  const stalePrefixes = [
+    '.sa-crew-bot-update-',
+    '.sa-crew-bid-bot-rollback.stale-',
+    `${appName}.failed-`,
+  ];
+  await Promise.all(entries
+    .filter((entry) => entry.isDirectory() && stalePrefixes.some((prefix) => entry.name.startsWith(prefix)))
+    .map((entry) => fs.rm(path.join(parentDir, entry.name), { recursive: true, force: true }).catch(() => undefined)));
+}
 
 if (process.platform === 'win32') {
   app.setAppUserModelId(APP_USER_MODEL_ID);
@@ -240,30 +256,42 @@ function runProjectCommand(command, args, options = {}) {
     const child = spawn(command, args, {
       cwd: options.cwd || APP_ROOT,
       shell: process.platform === 'win32',
-      windowsHide: true
+      windowsHide: true,
+      env: options.env || process.env,
     });
     let output = '';
     child.stdout.on('data', (chunk) => { output += chunk.toString(); });
     child.stderr.on('data', (chunk) => { output += chunk.toString(); });
     child.on('error', reject);
+    let timedOut = false;
+    const timeout = options.timeoutMs > 0 ? setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, options.timeoutMs) : null;
     child.on('close', (code) => {
+      if (timeout) clearTimeout(timeout);
       if (code === 0) resolve(output);
+      else if (timedOut) reject(new Error(`${command} exceeded the update time budget.`));
       else reject(new Error(`${command} ${args.join(' ')} failed with exit code ${code}: ${output.slice(-2000)}`));
     });
   });
 }
 
-async function downloadFile(url, targetPath) {
-  const response = await fetch(url, { headers: { 'User-Agent': 'sa-crew-bot-updater' } });
+async function downloadFile(url, targetPath, timeoutMs) {
+  const response = await fetch(url, {
+    headers: { 'User-Agent': 'sa-crew-bot-updater' },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
   if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`);
   await fs.writeFile(targetPath, Buffer.from(await response.arrayBuffer()));
 }
 
-function scheduleAppRelaunch(expectedVersion) {
-  if (relaunchScheduled) return;
+function scheduleAppRelaunch(expectedVersion, updatePlan) {
+  if (relaunchScheduled) return Promise.resolve();
   relaunchScheduled = true;
 
-  const restartHelper = spawn(process.execPath, [
+  const restartHelperExecutable = process.platform === 'win32' ? 'node.exe' : process.execPath;
+  const restartHelper = spawn(restartHelperExecutable, [
     path.join(__dirname, 'restart-helper.js'),
     String(process.pid),
     RESTART_TASK_NAME,
@@ -272,18 +300,29 @@ function scheduleAppRelaunch(expectedVersion) {
     APP_ROOT,
     path.join(__dirname, 'restart-status.ps1'),
     path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'SACrewBot', 'logs', 'supervisor.log'),
+    updatePlan.stagedRoot,
+    updatePlan.rollbackRoot,
+    String(updatePlan.deadlineEpochMs),
   ], {
-    cwd: APP_ROOT,
+    cwd: path.dirname(APP_ROOT),
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    env: process.env,
   });
-  restartHelper.unref();
-
-  // A clean exit lets the supervisor task become Ready. The detached helper
-  // then starts that canonical task and verifies a visible replacement window.
-  setTimeout(() => app.exit(0), 1200);
+  return new Promise((resolve, reject) => {
+    restartHelper.once('error', (error) => {
+      relaunchScheduled = false;
+      reject(error);
+    });
+    restartHelper.once('spawn', () => {
+      restartHelper.unref();
+      // A clean exit lets the supervisor task become Ready. The detached helper
+      // swaps the staged tree, starts the canonical task, and verifies startup.
+      setTimeout(() => app.exit(0), 1200);
+      resolve();
+    });
+  });
 }
 
 async function downloadUpdate() {
@@ -291,31 +330,61 @@ async function downloadUpdate() {
   const currentVersion = packageJson.version || 'unknown';
   if (compareVersions(latest.version, currentVersion) <= 0) return false;
 
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sa-crew-bot-update-'));
-  const archivePath = path.join(tempDir, 'main.tar.gz');
-  await downloadFile(latest.tarballUrl, archivePath);
-  await runProjectCommand('tar', ['-xzf', archivePath, '-C', tempDir], { cwd: tempDir });
-  const entries = await fs.readdir(tempDir, { withFileTypes: true });
-  const extracted = entries.find((entry) => entry.isDirectory() && entry.name.startsWith('sa-crew-bot-'));
-  if (!extracted) throw new Error('Downloaded update archive did not contain the expected project folder.');
-
-  const extractedRoot = path.join(tempDir, extracted.name);
-  const currentLockText = await fs.readFile(path.join(APP_ROOT, 'package-lock.json'), 'utf8').catch(() => null);
-  const nextLockText = await fs.readFile(path.join(extractedRoot, 'package-lock.json'), 'utf8').catch(() => null);
-  const shouldInstallDependencies = dependencyInstallRequired(currentLockText, nextLockText);
-  await fs.cp(extractedRoot, APP_ROOT, {
-    recursive: true,
-    force: true,
-    filter: (source) => {
-      const rel = path.relative(extractedRoot, source);
-      return !rel.startsWith('.git') && !rel.startsWith('node_modules') && !rel.startsWith('analysis');
+  const deadlineEpochMs = Date.now() + UPDATE_TOTAL_BUDGET_MS;
+  const remaining = () => deadlineEpochMs - Date.now() - UPDATE_RESTART_RESERVE_MS;
+  const requireRemainingTime = () => {
+    const milliseconds = remaining();
+    if (milliseconds <= 0) {
+      throw new Error('Update staging exceeded the 30-second time budget. The current installation was not changed.');
     }
-  });
-  if (shouldInstallDependencies) {
-    await runProjectCommand('npm', ['install'], { cwd: APP_ROOT });
+    return milliseconds;
+  };
+  const parentDir = path.dirname(APP_ROOT);
+  const workDir = await fs.mkdtemp(path.join(parentDir, '.sa-crew-bot-update-'));
+  const stagedRoot = `${workDir}-staged`;
+  const rollbackRoot = path.join(parentDir, '.sa-crew-bid-bot-rollback');
+  const archivePath = path.join(workDir, 'main.tar.gz');
+  try {
+    await downloadFile(latest.tarballUrl, archivePath, requireRemainingTime());
+    await runProjectCommand('tar', ['-xzf', archivePath, '-C', workDir], {
+      cwd: workDir,
+      timeoutMs: requireRemainingTime(),
+    });
+    const entries = await fs.readdir(workDir, { withFileTypes: true });
+    const extracted = entries.find((entry) => entry.isDirectory() && entry.name.startsWith('sa-crew-bot-'));
+    if (!extracted) throw new Error('Downloaded update archive did not contain the expected project folder.');
+
+    const extractedRoot = path.join(workDir, extracted.name);
+    const currentLockText = await fs.readFile(path.join(APP_ROOT, 'package-lock.json'), 'utf8').catch(() => null);
+    const nextLockText = await fs.readFile(path.join(extractedRoot, 'package-lock.json'), 'utf8').catch(() => null);
+    if (dependencyInstallRequired(currentLockText, nextLockText)) {
+      throw new Error('Dependency-changing releases are blocked from the fast updater. The current installation was not changed.');
+    }
+
+    await fs.rename(extractedRoot, stagedRoot);
+    const stagedNodeModules = path.join(stagedRoot, 'node_modules');
+    await fs.symlink(path.join(APP_ROOT, 'node_modules'), stagedNodeModules, 'junction');
+    try {
+      await runProjectCommand(process.execPath, [
+        path.join(APP_ROOT, 'node_modules', 'typescript', 'bin', 'tsc'),
+        '--project', path.join(stagedRoot, 'tsconfig.json'),
+      ], {
+        cwd: stagedRoot,
+        timeoutMs: requireRemainingTime(),
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      });
+    } finally {
+      await fs.rm(stagedNodeModules, { force: true });
+    }
+    await validateStagedRelease({ currentRoot: APP_ROOT, stagedRoot });
+    requireRemainingTime();
+    return { stagedRoot, rollbackRoot, deadlineEpochMs };
+  } catch (error) {
+    await fs.rm(stagedRoot, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  } finally {
+    await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
   }
-  await runProjectCommand('npm', ['run', 'build'], { cwd: APP_ROOT });
-  return true;
 }
 
 function installApplicationMenu() {
@@ -940,15 +1009,16 @@ handleTrustedIpc('app:check-update', async () => {
 
 handleTrustedIpc('app:apply-update', async () => {
   let stoppedBotForUpdate = false;
+  let updatePlan = null;
   try {
     const before = await getUpdateState();
     if (!before.updateAvailable) return { ok: true, status: 'up_to_date', ...before };
+    updatePlan = await downloadUpdate();
     if (botRunning) {
       await stopBot();
       stoppedBotForUpdate = true;
     }
-    await downloadUpdate();
-    scheduleAppRelaunch(before.remoteVersion);
+    await scheduleAppRelaunch(before.remoteVersion, updatePlan);
     return {
       ok: true,
       status: 'updated',
@@ -962,6 +1032,9 @@ handleTrustedIpc('app:apply-update', async () => {
       hasLocalChanges: false
     };
   } catch (err) {
+    if (updatePlan?.stagedRoot && !relaunchScheduled) {
+      await fs.rm(updatePlan.stagedRoot, { recursive: true, force: true }).catch(() => undefined);
+    }
     if (stoppedBotForUpdate) {
       try { await startBotFromSettings(); } catch (restartErr) { logger.error('Bot restart after failed update failed:', restartErr); }
     }
@@ -974,6 +1047,7 @@ app.whenReady().then(async () => {
   console.log(`[SA-Crew] prevent-app-suspension blocker=${powerSaveBlockerId} active=${powerSaveBlocker.isStarted(powerSaveBlockerId)}`)
 
   installApplicationMenu();
+  void cleanupStaleUpdateDirectories();
   createWindow();
 
   try {
