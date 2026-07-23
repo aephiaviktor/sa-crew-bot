@@ -22,7 +22,20 @@ test('restart helper accepts the supervisor-aware argument contract', () => {
     stagedRoot: 'C:\\Apps\\.sa-stage',
     rollbackRoot: 'C:\\Apps\\.sa-rollback',
     deadlineEpochMs: 2000000000000,
+    legacyUpdate: false,
   });
+});
+
+test('restart helper accepts the legacy updater contract during atomic-updater bootstrap', () => {
+  const parsed = parseRestartArguments([
+    'electron.exe', 'restart-helper.js', '123', 'SA Crew Bot', 'SA Crew Bot', '0.2.17',
+    'C:\\Apps\\sa-crew-bid-bot', 'C:\\Apps\\sa-crew-bid-bot\\electron\\restart-status.ps1',
+    'C:\\logs\\supervisor.log',
+  ], () => 1_000_000);
+
+  assert.equal(parsed.legacyUpdate, true);
+  assert.equal(parsed.rollbackRoot, 'C:\\Apps\\.sa-crew-bid-bot-rollback.unavailable');
+  assert.equal(parsed.deadlineEpochMs, 1_030_000);
 });
 
 test('restart helper reads the named Windows task state', async () => {
@@ -61,6 +74,21 @@ test('restart helper waits for Ready, starts the task, then launches the verifie
 
   assert.equal(launched, true);
   assert.deepEqual(events, ['state:4', 'state:4', 'state:3', 'swap', 'run', 'verify']);
+});
+
+test('legacy bootstrap skips atomic swap because the old updater already installed files', async () => {
+  const events = [];
+  const launched = await launchAfterTaskReady({
+    taskName: 'SA Crew Bot',
+    legacyUpdate: true,
+    getScheduledTaskState: async () => 3,
+    performAtomicSwap: async () => { events.push('unexpected-swap'); },
+    runScheduledTask: async () => { events.push('run'); return true; },
+    launchVerifier: () => { events.push('verify'); },
+  });
+
+  assert.equal(launched, true);
+  assert.deepEqual(events, ['run', 'verify']);
 });
 
 test('restart helper launches failure verification if Ready never arrives', async () => {

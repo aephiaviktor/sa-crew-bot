@@ -1,14 +1,35 @@
 const { spawn } = require('child_process');
 const { performAtomicSwap } = require('./atomic-update');
 
-function parseRestartArguments(argv) {
+function parseRestartArguments(argv, now = Date.now) {
   const args = argv.slice(2);
   const parentPid = Number.parseInt(args[0], 10);
   const [, taskName, appName, expectedVersion, appRoot, verifierPath, logPath, stagedRoot, rollbackRoot, deadlineText] = args;
+  if (!Number.isInteger(parentPid) || args.length < 7) return null;
+  if (!taskName || !appName || !expectedVersion || !appRoot || !verifierPath || !logPath) return null;
+
+  if (args.length === 7) {
+    const pathModule = require('node:path');
+    const pathApi = /^[A-Za-z]:[\\/]/.test(appRoot) ? pathModule.win32 : pathModule;
+    const parentDir = pathApi.dirname(appRoot);
+    return {
+      parentPid,
+      taskName,
+      appName,
+      expectedVersion,
+      appRoot,
+      verifierPath,
+      logPath,
+      stagedRoot: null,
+      rollbackRoot: pathApi.join(parentDir, '.sa-crew-bid-bot-rollback.unavailable'),
+      deadlineEpochMs: now() + 30_000,
+      legacyUpdate: true,
+    };
+  }
+
   const deadlineEpochMs = Number.parseInt(deadlineText, 10);
-  if (!Number.isInteger(parentPid) || args.length < 10 || !Number.isFinite(deadlineEpochMs)) return null;
-  if (!taskName || !appName || !expectedVersion || !appRoot || !verifierPath || !logPath || !stagedRoot || !rollbackRoot) return null;
-  return { parentPid, taskName, appName, expectedVersion, appRoot, verifierPath, logPath, stagedRoot, rollbackRoot, deadlineEpochMs };
+  if (args.length < 10 || !Number.isFinite(deadlineEpochMs) || !stagedRoot || !rollbackRoot) return null;
+  return { parentPid, taskName, appName, expectedVersion, appRoot, verifierPath, logPath, stagedRoot, rollbackRoot, deadlineEpochMs, legacyUpdate: false };
 }
 
 function sleep(ms) {
@@ -78,6 +99,7 @@ async function launchAfterTaskReady(options) {
     taskPollIntervalMs = 250,
     taskReadyWaitMs = 300_000,
     deadlineEpochMs = Number.POSITIVE_INFINITY,
+    legacyUpdate = false,
     getScheduledTaskState: readTaskState = getScheduledTaskState,
     runScheduledTask: startTask = runScheduledTask,
     launchVerifier: startVerifier = launchVerifier,
@@ -93,12 +115,14 @@ async function launchAfterTaskReady(options) {
     await sleep(taskPollIntervalMs);
   }
 
-  try {
-    await swapRelease(options);
-  } catch {
-    await startTask(taskName).catch(() => false);
-    startVerifier({ ...options, rollbackRoot: `${options.rollbackRoot}.unavailable` });
-    return false;
+  if (!legacyUpdate) {
+    try {
+      await swapRelease(options);
+    } catch {
+      await startTask(taskName).catch(() => false);
+      startVerifier({ ...options, rollbackRoot: `${options.rollbackRoot}.unavailable` });
+      return false;
+    }
   }
 
   if (!await startTask(taskName)) {
