@@ -70,3 +70,17 @@ test('renderer CSP is restrictive and remote status values are not interpolated 
   assert.doesNotMatch(renderer, /openOrdersListEl\.innerHTML\s*=/);
   assert.doesNotMatch(renderer, /recentActivityListEl\.innerHTML\s*=/);
 });
+
+test('sensitive settings use OS-protected storage and are redacted from renderer IPC', async () => {
+  const mainSource = await fs.readFile(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+  const rendererSource = await fs.readFile(path.join(__dirname, '..', 'electron', 'renderer.js'), 'utf8');
+  assert.match(mainSource, /safeStorage\.isAsyncEncryptionAvailable\(\)/);
+  assert.match(mainSource, /safeStorage\.isEncryptionAvailable\(\)/);
+  assert.match(mainSource, /safeStorage\.encryptStringAsync/);
+  assert.match(mainSource, /safeStorage\.decryptStringAsync/);
+  assert.match(mainSource, /safeStorage\.encryptString\(value\)/);
+  assert.match(mainSource, /safeStorage\.decryptString\(value\)/);
+  assert.match(mainSource, /SECRET_SETTING_KEYS = \['AEPHIA_API_KEY', 'HOT_WALLET_SECRET', 'RPC_URL'\]/);
+  assert.match(mainSource, /currentRpcUrl: status\.currentRpcUrl \? '\[stored in RPC Limiter\]' : ''/);
+  assert.match(rendererSource, /secureFieldNames = new Set\(\['AEPHIA_API_KEY', 'HOT_WALLET_SECRET', 'RPC_URL'\]\)/);
+});

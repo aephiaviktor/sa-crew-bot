@@ -23,6 +23,7 @@ const setupFields = [
 ];
 
 const fields = [...mainFields, ...setupFields];
+const secureFieldNames = new Set(['AEPHIA_API_KEY', 'HOT_WALLET_SECRET', 'RPC_URL']);
 const STATUS_POLL_MS = 60000;
 let appVersion = 'unknown';
 
@@ -290,6 +291,11 @@ function writeFormConfig(config) {
     if (element) {
       if (element.type === 'checkbox') {
         element.checked = parseBoolean(config[key]);
+      } else if (secureFieldNames.has(key)) {
+        element.value = '';
+        element.placeholder = config?.SECURE_SETTINGS_STATUS?.[key]
+          ? 'Stored securely — enter a new value to replace'
+          : 'Enter a value to store securely';
       } else {
         element.value = config[key] ?? '';
       }

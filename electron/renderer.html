@@ -79,12 +79,12 @@
               <form id="config-form" class="config-grid sensitive-hidden">
                 <label>
                   Aephia API Key
-                  <input class="sensitive-field" name="AEPHIA_API_KEY" type="text" autocomplete="off" />
+                  <input class="sensitive-field" name="AEPHIA_API_KEY" type="password" autocomplete="new-password" placeholder="Leave blank to keep stored key" />
                 </label>
 
                 <label>
                   Hot Wallet Secret
-                  <textarea class="sensitive-field" name="HOT_WALLET_SECRET" rows="3"></textarea>
+                  <textarea class="sensitive-field" name="HOT_WALLET_SECRET" rows="3" autocomplete="new-password" placeholder="Leave blank to keep stored secret"></textarea>
                 </label>
 
                 <div class="config-wide rpc-limiter-toggle-row">
@@ -110,7 +110,7 @@
                   <div class="config-grid nested-config-grid">
                     <label class="config-wide">
                       RPC URL
-                      <input class="sensitive-field" name="RPC_URL" type="text" autocomplete="off" />
+                      <input class="sensitive-field" name="RPC_URL" type="password" autocomplete="new-password" placeholder="Leave blank to keep stored URL" />
                     </label>
                     <label>
                       Requests / sec

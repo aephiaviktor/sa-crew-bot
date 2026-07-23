@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, dialog, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, dialog, powerSaveBlocker, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const fsSync = require('fs');
@@ -9,6 +9,7 @@ const { dependencyInstallRequired } = require('./update-dependencies');
 const { validateStagedRelease } = require('./atomic-update');
 const stableIcon = require('./lib/stable-icon');
 const { atomicWriteFile } = require('./lib/atomic-write');
+const { createSecureSettingsStore } = require('./lib/secure-settings');
 const { normalizeOrderPrices, parseOrderPriceRange } = require('./lib/order-price-limits');
 const {
   assertTrustedIpcEvent,
@@ -82,6 +83,8 @@ const APP_USER_MODEL_ID = 'com.aephia.sa-crew-bot';
 const RPC_LIMITER_UPDATED_BY = 'SA Crew Bot';
 const UPDATE_TOTAL_BUDGET_MS = 30_000;
 const UPDATE_RESTART_RESERVE_MS = 4_000;
+const SECRET_SETTING_KEYS = ['AEPHIA_API_KEY', 'HOT_WALLET_SECRET', 'RPC_URL'];
+let secureSettingsStore = null;
 
 async function cleanupStaleUpdateDirectories() {
   const parentDir = path.dirname(APP_ROOT);
@@ -577,6 +580,30 @@ function settingsPath() {
   return path.join(app.getPath('userData'), 'crew-bid-settings.json');
 }
 
+function secureSettingsPath() {
+  return path.join(app.getPath('userData'), 'crew-bid-secrets.enc.json');
+}
+
+async function getSecureSettingsStore() {
+  if (secureSettingsStore) return secureSettingsStore;
+  const asyncAvailable = await safeStorage.isAsyncEncryptionAvailable();
+  const syncAvailable = safeStorage.isEncryptionAvailable();
+  if (!asyncAvailable && !syncAvailable) {
+    throw new Error('OS-protected secure storage is unavailable. Secrets were not saved.');
+  }
+  secureSettingsStore = createSecureSettingsStore({
+    filePath: secureSettingsPath(),
+    encryptString: asyncAvailable
+      ? (value) => safeStorage.encryptStringAsync(value)
+      : async (value) => safeStorage.encryptString(value),
+    decryptString: asyncAvailable
+      ? (value) => safeStorage.decryptStringAsync(value)
+      : async (value) => ({ result: safeStorage.decryptString(value), shouldReEncrypt: false }),
+    atomicWriteFile,
+  });
+  return secureSettingsStore;
+}
+
 function formatLogChunk(args) {
   return args
     .map((arg) => {
@@ -619,25 +646,55 @@ const logger = {
   }
 };
 
-async function loadSettings() {
+async function loadSettings(includeSecrets = false) {
+  let stored = {};
   try {
     const raw = await fs.readFile(settingsPath(), 'utf8');
-    const settings = { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
-    return normalizeSettings(settings);
-  } catch {
-    const settings = { ...DEFAULT_SETTINGS };
-    return normalizeSettings(settings);
+    stored = JSON.parse(raw);
+  } catch {}
+
+  const secureStore = await getSecureSettingsStore();
+  let secure = await secureStore.read();
+  const migration = {};
+  let hadPlaintextSecretFields = false;
+  for (const key of SECRET_SETTING_KEYS) {
+    if (Object.hasOwn(stored, key)) hadPlaintextSecretFields = true;
+    if (!secure[key] && String(stored[key] || '').trim()) migration[key] = stored[key];
+    delete stored[key];
   }
+  if (Object.keys(migration).length) secure = await secureStore.update(migration);
+  if (hadPlaintextSecretFields) {
+    await atomicWriteFile(settingsPath(), JSON.stringify(stored, null, 2), 'utf8');
+  }
+
+  const settings = normalizeSettings({ ...DEFAULT_SETTINGS, ...stored, ...secure });
+  if (includeSecrets) return settings;
+  for (const key of SECRET_SETTING_KEYS) settings[key] = '';
+  settings.SECURE_SETTINGS_STATUS = Object.fromEntries(
+    SECRET_SETTING_KEYS.map((key) => [key, Boolean(secure[key])])
+  );
+  return settings;
 }
 
 async function saveSettings(payload) {
-  const merged = normalizeSettings({ ...(await loadSettings()), ...(payload || {}) });
+  const secureStore = await getSecureSettingsStore();
+  const secretPatch = {};
+  for (const key of SECRET_SETTING_KEYS) {
+    if (String(payload?.[key] || '').trim()) secretPatch[key] = payload[key];
+  }
+  if (Object.keys(secretPatch).length) await secureStore.update(secretPatch);
+  const current = await loadSettings(true);
+  const nonSecretPayload = { ...(payload || {}) };
+  for (const key of SECRET_SETTING_KEYS) delete nonSecretPayload[key];
+  const merged = normalizeSettings({ ...current, ...nonSecretPayload });
+  for (const key of SECRET_SETTING_KEYS) delete merged[key];
+  delete merged.SECURE_SETTINGS_STATUS;
   await atomicWriteFile(settingsPath(), JSON.stringify(merged, null, 2), 'utf8');
-  return merged;
+  return loadSettings(false);
 }
 
 async function getEffectiveBotSettings() {
-  const settings = await loadSettings();
+  const settings = await loadSettings(true);
   const useRpcLimiter = parseBooleanSetting(settings.USE_RPC_LIMITER);
   const botSettings = { ...settings };
 
@@ -706,7 +763,7 @@ async function persistBidIdentityFromStatus(status, rowId) {
     return;
   }
 
-  const current = await loadSettings();
+  const current = await loadSettings(true);
   const nextBidId = String(status.bidId || '').trim();
   const nextBidState = String(status.bidState || '').trim();
   const currentRows = Array.isArray(current.LIMIT_ORDERS) ? current.LIMIT_ORDERS : [];
@@ -906,10 +963,18 @@ handleTrustedIpc('settings:save', async (payload) => {
   return await saveSettings(validateSettingsPayload(payload));
 });
 
-handleTrustedIpc('rpc-limiter:get-status', async () => getRpcLimiterStatus());
+handleTrustedIpc('rpc-limiter:get-status', async () => {
+  const status = getRpcLimiterStatus();
+  return { ...status, apiKey: '', currentRpcUrl: status.currentRpcUrl ? '[stored in RPC Limiter]' : '' };
+});
 
 handleTrustedIpc('rpc-limiter:send-settings', async (payload) => {
-  return await sendSettingsToRpcLimiter(validateRpcLimiterPayload(payload));
+  const config = validateRpcLimiterPayload(payload);
+  if (!String(config.RPC_URL || '').trim()) {
+    config.RPC_URL = (await loadSettings(true)).RPC_URL;
+  }
+  const status = await sendSettingsToRpcLimiter(config);
+  return { ...status, apiKey: '', currentRpcUrl: status.currentRpcUrl ? '[stored in RPC Limiter]' : '' };
 });
 
 handleTrustedIpc('bot:start', async () => {
