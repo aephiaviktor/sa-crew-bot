@@ -42,7 +42,8 @@
                           <th>Bid ID</th>
                           <th>Quantity</th>
                           <th>Refill below Qty</th>
-                          <th>Price (SOL)</th>
+                          <th>Min price</th>
+                          <th>Max price</th>
                           <th>Traits</th>
                           <th></th>
                         </tr>
@@ -50,7 +51,7 @@
                       <tbody id="limit-orders-body"></tbody>
                       <tfoot>
                         <tr>
-                          <td colspan="6"></td>
+                          <td colspan="7"></td>
                           <td class="remove-cell add-row-cell">
                             <button id="add-limit-order-row-btn" type="button">+ Add Row</button>
                           </td>
@@ -148,11 +149,6 @@
                 <label>
                   Bid Step SOL
                   <input name="BID_STEP_SOL" type="text" />
-                </label>
-
-                <label>
-                  Min Bid SOL
-                  <input name="MIN_BID_SOL" type="text" />
                 </label>
 
                 <label>

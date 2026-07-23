@@ -3,7 +3,7 @@ const { pathToFileURL } = require('node:url');
 const SETTINGS_FIELDS = new Set([
   'AEPHIA_API_KEY', 'RPC_URL', 'HOT_WALLET_SECRET', 'SIDE', 'COLLECTION_SLUG_UUID',
   'TARGET_ID', 'MAKER_BROKER', 'BID_STATE', 'BID_ID', 'MARGIN_ACCOUNT', 'QUANTITY',
-  'MIN_BID_SOL', 'MAX_BID_SOL', 'BID_STEP_SOL', 'RPC_REQUESTS_PER_SECOND',
+  'MAX_BID_SOL', 'BID_STEP_SOL', 'RPC_REQUESTS_PER_SECOND',
   'RPC_TX_SEND_RATE_LIMIT_PER_SECOND', 'USE_RPC_LIMITER', 'CHECK_INTERVAL_MINUTES',
   'MIN_RELEVANT_BID_QUANTITY', 'LIMIT_ORDERS',
 ]);
@@ -11,7 +11,7 @@ const RPC_LIMITER_FIELDS = new Set([
   'RPC_URL', 'RPC_REQUESTS_PER_SECOND', 'RPC_TX_SEND_RATE_LIMIT_PER_SECOND',
 ]);
 const LIMIT_ORDER_FIELDS = new Set([
-  'id', 'side', 'bidState', 'bidId', 'quantity', 'refillBelowQuantity', 'maxBidSol', 'traitsLabel',
+  'id', 'side', 'bidState', 'bidId', 'quantity', 'refillBelowQuantity', 'minBidSol', 'maxBidSol', 'traitsLabel',
 ]);
 
 function assertPlainObject(value, label) {

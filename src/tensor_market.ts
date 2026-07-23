@@ -566,8 +566,8 @@ export async function fetchCrewMarketSnapshot(params: {
 export function computeTargetCrewBidLamports(input: {
   bestCompetingBidLamports: number | null;
   competingBidLamports?: number[];
-  minBidLamports: number;
-  maxBidLamports: number;
+  minBidLamports: number | null;
+  maxBidLamports: number | null;
   bidStepLamports: number;
   bestAskLamports: number | null;
   minSpreadLamports?: number;
@@ -578,20 +578,22 @@ export function computeTargetCrewBidLamports(input: {
     : input.bestCompetingBidLamports != null
       ? [input.bestCompetingBidLamports]
       : [];
+  const minimum = input.minBidLamports ?? input.bidStepLamports;
+  const maximum = input.maxBidLamports ?? Number.POSITIVE_INFINITY;
   const bestReachableCompetingBidLamports =
     competingBidLamports
-      .filter((amount) => amount < input.maxBidLamports)
+      .filter((amount) => amount < maximum)
       .sort((a, b) => b - a)[0] ?? null;
   const anchor =
     bestReachableCompetingBidLamports != null
       ? bestReachableCompetingBidLamports + input.bidStepLamports
-      : input.minBidLamports;
+      : minimum;
 
-  let target = Math.max(input.minBidLamports, Math.min(input.maxBidLamports, anchor));
+  let target = Math.max(minimum, Math.min(maximum, anchor));
 
   if (input.bestAskLamports != null) {
     target = Math.min(target, input.bestAskLamports - minSpreadLamports);
   }
 
-  return Math.max(input.minBidLamports, target);
+  return Math.max(minimum, target);
 }

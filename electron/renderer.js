@@ -18,7 +18,6 @@ const setupFields = [
   'MAKER_BROKER',
   'MARGIN_ACCOUNT',
   'BID_STEP_SOL',
-  'MIN_BID_SOL',
   'CHECK_INTERVAL_MINUTES',
   'MIN_RELEVANT_BID_QUANTITY'
 ];
@@ -89,6 +88,7 @@ function normalizeLimitOrderRow(row = {}) {
     bidId: String(row.bidId ?? row.BID_ID ?? '').trim(),
     quantity: String(row.quantity ?? row.QUANTITY ?? '').trim(),
     refillBelowQuantity: String(row.refillBelowQuantity ?? row.REFILL_BELOW_QUANTITY ?? '').trim(),
+    minBidSol: String(row.minBidSol ?? row.MIN_BID_SOL ?? '').trim(),
     maxBidSol: String(row.maxBidSol ?? row.MAX_BID_SOL ?? '').trim(),
     traitsLabel: String(row.traitsLabel ?? '').trim()
   };
@@ -117,6 +117,7 @@ function getLimitOrderRowsFromDom() {
       bidId: rowEl.querySelector('[data-field="bidId"]')?.value,
       quantity: rowEl.querySelector('[data-field="quantity"]')?.value,
       refillBelowQuantity: rowEl.querySelector('[data-field="refillBelowQuantity"]')?.value,
+      minBidSol: rowEl.querySelector('[data-field="minBidSol"]')?.value,
       maxBidSol: rowEl.querySelector('[data-field="maxBidSol"]')?.value,
       traitsLabel: rowEl.querySelector('[data-field="traitsLabel"]')?.textContent
     })
@@ -126,9 +127,7 @@ function getLimitOrderRowsFromDom() {
 function setRowHintText(rowEl) {
   const side = rowEl.querySelector('[data-field="side"]')?.value || 'buy';
   const quantityHint = rowEl.querySelector('[data-role="quantity-hint"]');
-  const priceHint = rowEl.querySelector('[data-role="price-hint"]');
   if (quantityHint) quantityHint.textContent = side === 'sell' ? 'Min sell quantity' : 'Max buy quantity';
-  if (priceHint) priceHint.textContent = side === 'sell' ? 'Min price' : 'Max price';
 }
 
 function renderLimitOrderRows(rows) {
@@ -175,8 +174,14 @@ function renderLimitOrderRows(rows) {
       </td>
       <td>
         <div class="cell-stack">
+          <input data-field="minBidSol" name="MIN_BID_SOL_${index}" type="text" value="${escapeHtml(row.minBidSol)}" />
+          <span class="cell-hint">SOL</span>
+        </div>
+      </td>
+      <td>
+        <div class="cell-stack">
           <input data-field="maxBidSol" name="MAX_BID_SOL_${index}" type="text" value="${escapeHtml(row.maxBidSol)}" />
-          <span class="cell-hint" data-role="price-hint">Max price</span>
+          <span class="cell-hint">SOL</span>
         </div>
       </td>
       <td>
@@ -920,7 +925,8 @@ addLimitOrderRowBtn?.addEventListener('click', () => {
       bidState: '',
       bidId: '',
       quantity: rows[0]?.quantity || '',
-      maxBidSol: rows[0]?.maxBidSol || ''
+      minBidSol: '',
+      maxBidSol: ''
     })
   ]);
   setMainActionFeedback('Row added. Save settings to apply.', 'info');

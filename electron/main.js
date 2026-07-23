@@ -9,6 +9,7 @@ const packageJson = require('../package.json');
 const { dependencyInstallRequired } = require('./update-dependencies');
 const stableIcon = require('./lib/stable-icon');
 const { atomicWriteFile } = require('./lib/atomic-write');
+const { normalizeOrderPrices, parseOrderPriceRange } = require('./lib/order-price-limits');
 const {
   assertTrustedIpcEvent,
   validateCancelBidPayload,
@@ -41,7 +42,6 @@ const DEFAULT_SETTINGS = {
   BID_ID: 'DXBu4AQXu9XbeGWFC2awMfWKLFzuzdProppD6WU7jQ5V',
   MARGIN_ACCOUNT: '3sMSSpBbMNDBiAnzzHNVmXN7Epb9DKaRK3Ng7HtUMuEH',
   QUANTITY: '10',
-  MIN_BID_SOL: '0.001',
   MAX_BID_SOL: '0.008',
   BID_STEP_SOL: '0.00001',
   RPC_REQUESTS_PER_SECOND: '10',
@@ -588,6 +588,7 @@ function makeOrderId() {
 
 function normalizeLimitOrder(row, index, settings) {
   const fallback = settings || DEFAULT_SETTINGS;
+  const prices = normalizeOrderPrices(row, fallback.MIN_BID_SOL, fallback.MAX_BID_SOL);
   return {
     id: String(row?.id || makeOrderId()),
     side: row?.side === 'sell' ? 'sell' : 'buy',
@@ -595,7 +596,8 @@ function normalizeLimitOrder(row, index, settings) {
     bidId: String(row?.bidId ?? row?.BID_ID ?? fallback.BID_ID ?? '').trim(),
     quantity: String(row?.quantity ?? row?.QUANTITY ?? fallback.QUANTITY ?? '10').trim(),
     refillBelowQuantity: String(row?.refillBelowQuantity ?? row?.REFILL_BELOW_QUANTITY ?? '').trim(),
-    maxBidSol: String(row?.maxBidSol ?? row?.MAX_BID_SOL ?? fallback.MAX_BID_SOL ?? '0.008').trim()
+    minBidSol: prices.minBidSol,
+    maxBidSol: prices.maxBidSol
   };
 }
 
@@ -612,6 +614,7 @@ function normalizeSettings(settings) {
           bidId: normalized.BID_ID,
           quantity: normalized.QUANTITY,
           refillBelowQuantity: '',
+          minBidSol: normalized.MIN_BID_SOL,
           maxBidSol: normalized.MAX_BID_SOL
         }
       ];
@@ -623,6 +626,7 @@ function normalizeSettings(settings) {
   normalized.BID_ID = first.bidId;
   normalized.QUANTITY = first.quantity;
   normalized.MAX_BID_SOL = first.maxBidSol;
+  delete normalized.MIN_BID_SOL;
 
   return normalized;
 }
@@ -651,6 +655,7 @@ async function persistBidIdentityFromStatus(status, rowId) {
 
 function makeBotConfig(s, row) {
   const order = normalizeLimitOrder(row || {}, 0, s);
+  const { minBidSol, maxBidSol } = parseOrderPriceRange(order.minBidSol, order.maxBidSol);
   const quantity = Number(order.quantity);
   const refillBelowQuantity = Number(order.refillBelowQuantity);
   const minRelevantBidQuantity = Number(s.MIN_RELEVANT_BID_QUANTITY);
@@ -673,8 +678,8 @@ function makeBotConfig(s, row) {
       ? Math.floor(refillBelowQuantity)
       : null,
     minRelevantBidQuantity: Number.isFinite(minRelevantBidQuantity) && minRelevantBidQuantity > 0 ? minRelevantBidQuantity : quantity,
-    minBidSol: Number(s.MIN_BID_SOL),
-    maxBidSol: Number(order.maxBidSol),
+    minBidSol,
+    maxBidSol,
     bidStepSol: Number(s.BID_STEP_SOL),
     checkIntervalMinutes: Number(s.CHECK_INTERVAL_MINUTES),
     useRpcLimiter: parseBooleanSetting(s.USE_RPC_LIMITER)

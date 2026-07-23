@@ -39,8 +39,8 @@ export type CrewBidBotConfig = {
   refillBelowQuantity: number | null;
   minRelevantBidQuantity: number;
 
-  minBidSol: number;
-  maxBidSol: number;
+  minBidSol: number | null;
+  maxBidSol: number | null;
   bidStepSol: number;
   checkIntervalMinutes: number;
   useRpcLimiter?: boolean;
@@ -605,8 +605,8 @@ export class CrewBidBot {
     const target = computeTargetCrewBidLamports({
       bestCompetingBidLamports: this.state.bestCompetingBidLamports,
       competingBidLamports: this.state.competingBidLamports,
-      minBidLamports: solToLamports(this.config.minBidSol),
-      maxBidLamports: solToLamports(this.config.maxBidSol),
+      minBidLamports: this.config.minBidSol == null ? null : solToLamports(this.config.minBidSol),
+      maxBidLamports: this.config.maxBidSol == null ? null : solToLamports(this.config.maxBidSol),
       bidStepLamports: solToLamports(this.config.bidStepSol),
       bestAskLamports: this.state.bestAskLamports
     });
@@ -622,7 +622,7 @@ export class CrewBidBot {
       return false;
     }
 
-    return target < solToLamports(this.config.minBidSol);
+    return this.config.minBidSol != null && target < solToLamports(this.config.minBidSol);
   }
 
   async updateBidIfNeeded(): Promise<boolean> {
