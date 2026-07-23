@@ -964,12 +964,18 @@ updateConfirmBtn?.addEventListener('click', async () => {
       renderUpdateModalState(result);
       appendLog('[' + new Date().toISOString() + '] [INFO] App update status: ' + (result.status || 'ok'));
     } else {
-      renderUpdateModalState(availableUpdate, new Error(result?.message || 'unknown error'));
-      appendLog('[' + new Date().toISOString() + '] [ERROR] App update failed: ' + (result?.message || 'unknown error'));
+      const message = result?.message || 'unknown error';
+      renderUpdateModalState(availableUpdate);
+      updateMessageEl.textContent = 'Update failed safely: ' + message + ' Current version remains installed.';
+      updateConfirmBtn.disabled = false;
+      appendLog('[' + new Date().toISOString() + '] [ERROR] App update failed: ' + message);
     }
   } catch (err) {
-    renderUpdateModalState(availableUpdate, err);
-    appendLog('[' + new Date().toISOString() + '] [ERROR] App update failed: ' + (err?.message || String(err)));
+    const message = err?.message || String(err);
+    renderUpdateModalState(availableUpdate);
+    updateMessageEl.textContent = 'Update failed safely: ' + message + ' Current version remains installed.';
+    updateConfirmBtn.disabled = false;
+    appendLog('[' + new Date().toISOString() + '] [ERROR] App update failed: ' + message);
   } finally {
     updateCancelBtn.disabled = false;
   }

@@ -1,5 +1,10 @@
 node_modules/
 dist/
+!dist/
+dist/*
+!dist/crew_bid_bot.js
+!dist/tensor_market.js
+!dist/.tsbuildinfo
 analysis/
 
 .env
@@ -14,4 +19,3 @@ yarn-error.log*
 Thumbs.db
 
 *.local
-

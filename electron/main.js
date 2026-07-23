@@ -81,7 +81,7 @@ const APP_ROOT = path.join(__dirname, '..');
 const APP_USER_MODEL_ID = 'com.aephia.sa-crew-bot';
 const RPC_LIMITER_UPDATED_BY = 'SA Crew Bot';
 const UPDATE_TOTAL_BUDGET_MS = 30_000;
-const UPDATE_RESTART_RESERVE_MS = 8_000;
+const UPDATE_RESTART_RESERVE_MS = 4_000;
 
 async function cleanupStaleUpdateDirectories() {
   const parentDir = path.dirname(APP_ROOT);
@@ -255,7 +255,7 @@ function runProjectCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd || APP_ROOT,
-      shell: process.platform === 'win32',
+      shell: options.shell ?? process.platform === 'win32',
       windowsHide: true,
       env: options.env || process.env,
     });
@@ -371,6 +371,7 @@ async function downloadUpdate() {
       ], {
         cwd: stagedRoot,
         timeoutMs: requireRemainingTime(),
+        shell: false,
         env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
       });
     } finally {
