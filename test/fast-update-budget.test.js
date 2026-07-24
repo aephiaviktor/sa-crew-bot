@@ -3,11 +3,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-test('staged compiler receives most of the 30-second budget and bypasses the Windows shell', async () => {
+test('fast updater installs committed build output without compiling on the target machine', async () => {
   const main = await fs.readFile(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
   assert.match(main, /UPDATE_TOTAL_BUDGET_MS = 30_000/);
   assert.match(main, /UPDATE_RESTART_RESERVE_MS = 4_000/);
-  assert.match(main, /timeoutMs: requireRemainingTime\(\),\s*shell: false,/);
+  assert.doesNotMatch(main, /typescript['"], ['"]bin['"], ['"]tsc/);
+  assert.doesNotMatch(main, /ELECTRON_RUN_AS_NODE/);
+  assert.doesNotMatch(main, /stagedNodeModules/);
 });
 
 test('release archive carries incremental build output for legacy-updater bootstrap', async () => {

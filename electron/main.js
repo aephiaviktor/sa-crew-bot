@@ -365,21 +365,8 @@ async function downloadUpdate() {
     }
 
     await fs.rename(extractedRoot, stagedRoot);
-    const stagedNodeModules = path.join(stagedRoot, 'node_modules');
-    await fs.symlink(path.join(APP_ROOT, 'node_modules'), stagedNodeModules, 'junction');
-    try {
-      await runProjectCommand(process.execPath, [
-        path.join(APP_ROOT, 'node_modules', 'typescript', 'bin', 'tsc'),
-        '--project', path.join(stagedRoot, 'tsconfig.json'),
-      ], {
-        cwd: stagedRoot,
-        timeoutMs: requireRemainingTime(),
-        shell: false,
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-      });
-    } finally {
-      await fs.rm(stagedNodeModules, { force: true });
-    }
+    // Releases commit their compiled dist/ output. Validate that output instead of
+    // rebuilding on the target machine, where compilation can exhaust the update budget.
     await validateStagedRelease({ currentRoot: APP_ROOT, stagedRoot });
     requireRemainingTime();
     return { stagedRoot, rollbackRoot, deadlineEpochMs };
