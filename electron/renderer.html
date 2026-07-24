@@ -73,18 +73,18 @@
             <section class="tab-panel" data-panel="setup" role="tabpanel" aria-labelledby="tab-setup">
               <div class="setup-toolbar">
                 <h2>Settings</h2>
-                <button id="toggle-sensitive-btn" class="sensitive-toggle" type="button">Show Sensitive Fields</button>
+                <button id="toggle-sensitive-btn" class="sensitive-toggle" type="button">Show Current RPC Limiter URL</button>
               </div>
 
               <form id="config-form" class="config-grid sensitive-hidden">
                 <label>
                   Aephia API Key
-                  <input class="sensitive-field" name="AEPHIA_API_KEY" type="password" autocomplete="new-password" placeholder="Leave blank to keep stored key" />
+                  <input name="AEPHIA_API_KEY" type="password" autocomplete="new-password" placeholder="Leave blank to keep stored key" />
                 </label>
 
                 <label>
                   Hot Wallet Secret
-                  <textarea class="sensitive-field" name="HOT_WALLET_SECRET" rows="3" autocomplete="new-password" placeholder="Leave blank to keep stored secret"></textarea>
+                  <textarea name="HOT_WALLET_SECRET" rows="3" autocomplete="new-password" placeholder="Leave blank to keep stored secret"></textarea>
                 </label>
 
                 <div class="config-wide rpc-limiter-toggle-row">
@@ -110,7 +110,7 @@
                   <div class="config-grid nested-config-grid">
                     <label class="config-wide">
                       RPC URL
-                      <input class="sensitive-field" name="RPC_URL" type="password" autocomplete="new-password" placeholder="Leave blank to keep stored URL" />
+                      <input name="RPC_URL" type="password" autocomplete="new-password" placeholder="Leave blank to keep stored URL" />
                     </label>
                     <label>
                       Requests / sec

@@ -242,7 +242,7 @@ function updateLimitOrderHints() {
 function setSensitiveVisible(visible) {
   sensitiveVisible = visible;
   form.classList.toggle('sensitive-hidden', !visible);
-  toggleSensitiveBtn.textContent = visible ? 'Hide Sensitive Fields' : 'Show Sensitive Fields';
+  toggleSensitiveBtn.textContent = visible ? 'Hide Current RPC Limiter URL' : 'Show Current RPC Limiter URL';
 }
 
 function setActiveTab(tabName) {
@@ -793,6 +793,7 @@ async function boot() {
 
   for (const button of tabButtons) {
     button.addEventListener('click', () => {
+      if (button.dataset.tab === 'setup') setSensitiveVisible(false);
       setActiveTab(button.dataset.tab);
     });
   }

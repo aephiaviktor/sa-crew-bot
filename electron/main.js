@@ -952,7 +952,7 @@ handleTrustedIpc('settings:save', async (payload) => {
 
 handleTrustedIpc('rpc-limiter:get-status', async () => {
   const status = getRpcLimiterStatus();
-  return { ...status, apiKey: '', currentRpcUrl: status.currentRpcUrl ? '[stored in RPC Limiter]' : '' };
+  return { ...status, apiKey: '', currentRpcUrl: status.currentRpcUrl };
 });
 
 handleTrustedIpc('rpc-limiter:send-settings', async (payload) => {
@@ -961,7 +961,7 @@ handleTrustedIpc('rpc-limiter:send-settings', async (payload) => {
     config.RPC_URL = (await loadSettings(true)).RPC_URL;
   }
   const status = await sendSettingsToRpcLimiter(config);
-  return { ...status, apiKey: '', currentRpcUrl: status.currentRpcUrl ? '[stored in RPC Limiter]' : '' };
+  return { ...status, apiKey: '', currentRpcUrl: status.currentRpcUrl };
 });
 
 handleTrustedIpc('bot:start', async () => {

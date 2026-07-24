@@ -81,6 +81,16 @@ test('sensitive settings use OS-protected storage and are redacted from renderer
   assert.match(mainSource, /safeStorage\.encryptString\(value\)/);
   assert.match(mainSource, /safeStorage\.decryptString\(value\)/);
   assert.match(mainSource, /SECRET_SETTING_KEYS = \['AEPHIA_API_KEY', 'HOT_WALLET_SECRET', 'RPC_URL'\]/);
-  assert.match(mainSource, /currentRpcUrl: status\.currentRpcUrl \? '\[stored in RPC Limiter\]' : ''/);
+  assert.doesNotMatch(mainSource, /currentRpcUrl: status\.currentRpcUrl \? '\[stored in RPC Limiter\]' : ''/);
+  assert.match(mainSource, /currentRpcUrl: status\.currentRpcUrl/);
   assert.match(rendererSource, /secureFieldNames = new Set\(\['AEPHIA_API_KEY', 'HOT_WALLET_SECRET', 'RPC_URL'\]\)/);
+  assert.match(rendererSource, /if \(button\.dataset\.tab === 'setup'\) setSensitiveVisible\(false\)/);
+});
+
+test('only the current RPC limiter URL uses the revealable blur control', async () => {
+  const html = await fs.readFile(path.join(__dirname, '..', 'electron', 'renderer.html'), 'utf8');
+  assert.match(html, /class="sensitive-field" id="rpc-limiter-current-url"/);
+  assert.doesNotMatch(html, /class="sensitive-field" name="AEPHIA_API_KEY"/);
+  assert.doesNotMatch(html, /class="sensitive-field" name="HOT_WALLET_SECRET"/);
+  assert.doesNotMatch(html, /class="sensitive-field" name="RPC_URL"/);
 });
