@@ -23,6 +23,24 @@ const defaultLogger = {
     warn: (...args) => console.warn(...args),
     error: (...args) => console.error(...args)
 };
+function getErrorText(error) {
+    if (error instanceof Error) {
+        return `${error.name} ${error.message}`.trim();
+    }
+    if (typeof error === 'string') {
+        return error;
+    }
+    try {
+        return JSON.stringify(error);
+    }
+    catch {
+        return String(error);
+    }
+}
+function isRpcRateLimitError(error) {
+    const text = getErrorText(error).toLowerCase();
+    return text.includes('429') || text.includes('too many requests') || text.includes('rate limit');
+}
 function decodeSecret(secret) {
     const trimmed = secret.trim();
     if (trimmed.startsWith('[')) {
@@ -98,22 +116,90 @@ class SharedRpcConnectionLimiter {
             this.lastSharedWaitLogAtMs.set(logKey, now);
         }
     }
+    /**
+     * Wait on the shared limiter and return the provider it picked. Returns
+     * `null` when the shared limiter is disabled.
+     */
+    async waitForProvider(label, bucketName = 'rpc:shared', method = label) {
+        if (!this.useSharedLimiter())
+            return null;
+        return await this.sharedLimiter.wait(bucketName, {
+            label,
+            metrics: {
+                app: this.metricsApp,
+                profile: this.metricsProfile,
+                method,
+            },
+        });
+    }
+    /** Expose the shared limiter so callers can report 429s back. */
+    getSharedLimiter() {
+        return this.useSharedLimiter() ? this.sharedLimiter : null;
+    }
 }
-function createLimitedConnection(rpcUrl, logger, useSharedLimiter) {
-    const connection = new web3_js_1.Connection(rpcUrl, { commitment: 'confirmed', disableRetryOnRateLimit: true });
+function createLimitedConnection(mainUrl, fallbackUrl, logger, useSharedLimiter) {
+    const connectionConfig = { commitment: 'confirmed', disableRetryOnRateLimit: true };
+    const primary = new web3_js_1.Connection(mainUrl, connectionConfig);
+    const fallback = fallbackUrl && fallbackUrl !== mainUrl ? new web3_js_1.Connection(fallbackUrl, connectionConfig) : null;
     const limiter = new SharedRpcConnectionLimiter(logger, useSharedLimiter, 'SA Crew Bot');
-    return new Proxy(connection, {
+    const callWithLimit = (label, bucketName, method, target, value, args) => limiter.wait(label, bucketName, method).then(() => value.apply(target, args));
+    return new Proxy(primary, {
         get(target, prop, receiver) {
             const value = Reflect.get(target, prop, receiver);
             if (typeof value !== 'function') {
                 return value;
             }
+            const fallbackValue = fallback ? Reflect.get(fallback, prop, fallback) : null;
             return async (...args) => {
                 const method = String(prop);
                 const label = `Connection.${String(prop)}()`;
                 const bucketName = prop === 'sendRawTransaction' ? 'tx:shared' : 'rpc:shared';
-                await limiter.wait(label, bucketName, method);
-                return value.apply(target, args);
+                // Provider-aware dispatch: ask the shared limiter which provider to
+                // use, dispatch to that Connection, and on 429 report back so the
+                // failed provider goes into cooldown.
+                const sharedLimiter = limiter.getSharedLimiter();
+                let pickedProvider = 'main';
+                if (sharedLimiter) {
+                    try {
+                        const pick = await limiter.waitForProvider(label, bucketName, method);
+                        if (pick)
+                            pickedProvider = pick.provider;
+                    }
+                    catch (waitError) {
+                        logger.warn(`Shared limiter wait failed for ${label}, defaulting to main.`, waitError);
+                    }
+                }
+                const usePickedAsPrimary = pickedProvider === 'main';
+                const pickedTarget = usePickedAsPrimary ? target : (fallback ?? target);
+                const pickedValue = usePickedAsPrimary ? value : (typeof fallbackValue === 'function' ? fallbackValue : value);
+                const otherTarget = usePickedAsPrimary ? (fallback ?? target) : target;
+                const otherValue = usePickedAsPrimary
+                    ? (typeof fallbackValue === 'function' ? fallbackValue : null)
+                    : value;
+                const otherLabel = usePickedAsPrimary
+                    ? `fallback Connection.${String(prop)}()`
+                    : `main Connection.${String(prop)}()`;
+                try {
+                    return await callWithLimit(label, bucketName, method, pickedTarget, pickedValue, args);
+                }
+                catch (error) {
+                    if (!otherTarget || otherTarget === pickedTarget || typeof otherValue !== 'function') {
+                        if (sharedLimiter && isRpcRateLimitError(error)) {
+                            await sharedLimiter.recordProviderOutcome(pickedProvider, 'rate_limited').catch(() => undefined);
+                        }
+                        throw error;
+                    }
+                    logger.warn(`Provider ${pickedProvider} failed for ${label}, trying other provider.`, error);
+                    if (sharedLimiter && isRpcRateLimitError(error)) {
+                        try {
+                            await sharedLimiter.recordProviderOutcome(pickedProvider, 'rate_limited');
+                        }
+                        catch (reportError) {
+                            logger.warn(`Failed to record provider outcome for ${pickedProvider}.`, reportError);
+                        }
+                    }
+                    return await callWithLimit(otherLabel, bucketName, method, otherTarget, otherValue, args);
+                }
             };
         }
     });
@@ -210,7 +296,7 @@ class CrewBidBot {
             secretKeyBytes.length === 32
                 ? web3_js_1.Keypair.fromSeed(secretKeyBytes)
                 : web3_js_1.Keypair.fromSecretKey(secretKeyBytes);
-        this.connection = createLimitedConnection(config.rpcUrl, this.logger, () => Boolean(this.config.useRpcLimiter));
+        this.connection = createLimitedConnection(config.rpcUrl, config.rpcUrlFallback, this.logger, () => Boolean(this.config.useRpcLimiter));
         const provider = new anchor_1.AnchorProvider(this.connection, new anchor_1.Wallet(this.wallet), anchor_1.AnchorProvider.defaultOptions());
         this.tcompSdk = new tcomp_sdk_1.TCompSDK({ provider });
         if (config.side !== 'buy') {

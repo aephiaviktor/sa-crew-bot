@@ -24,6 +24,7 @@ const RPC_LIMITER_WAIT_LOG_THROTTLE_MS = 60000;
 export type CrewBidBotConfig = {
   rowId: string;
   rpcUrl: string;
+  rpcUrlFallback?: string;
   hotWalletSecret: string;
 
   side: 'buy' | 'sell';
@@ -134,6 +135,25 @@ type CrewMarketState = {
   solBalance: number | null;
 };
 
+function getErrorText(error: unknown): string {
+  if (error instanceof Error) {
+    return `${error.name} ${error.message}`.trim();
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+function isRpcRateLimitError(error: unknown): boolean {
+  const text = getErrorText(error).toLowerCase();
+  return text.includes('429') || text.includes('too many requests') || text.includes('rate limit');
+}
+
 function decodeSecret(secret: string): Uint8Array {
   const trimmed = secret.trim();
 
@@ -216,29 +236,110 @@ class SharedRpcConnectionLimiter {
       this.lastSharedWaitLogAtMs.set(logKey, now);
     }
   }
+
+  /**
+   * Wait on the shared limiter and return the provider it picked. Returns
+   * `null` when the shared limiter is disabled.
+   */
+  async waitForProvider(
+    label: string,
+    bucketName: 'rpc:shared' | 'tx:shared' = 'rpc:shared',
+    method: string = label,
+  ): Promise<{ provider: 'main' | 'fallback' } | null> {
+    if (!this.useSharedLimiter()) return null;
+    return await this.sharedLimiter.wait(bucketName, {
+      label,
+      metrics: {
+        app: this.metricsApp,
+        profile: this.metricsProfile,
+        method,
+      },
+    });
+  }
+
+  /** Expose the shared limiter so callers can report 429s back. */
+  getSharedLimiter(): RpcLimiter | null {
+    return this.useSharedLimiter() ? this.sharedLimiter : null;
+  }
 }
 
 function createLimitedConnection(
-  rpcUrl: string,
+  mainUrl: string,
+  fallbackUrl: string | undefined,
   logger: CrewBidBotLogger,
   useSharedLimiter: () => boolean
 ): Connection {
-  const connection = new Connection(rpcUrl, { commitment: 'confirmed', disableRetryOnRateLimit: true });
+  const connectionConfig = { commitment: 'confirmed' as const, disableRetryOnRateLimit: true };
+  const primary = new Connection(mainUrl, connectionConfig);
+  const fallback = fallbackUrl && fallbackUrl !== mainUrl ? new Connection(fallbackUrl, connectionConfig) : null;
   const limiter = new SharedRpcConnectionLimiter(logger, useSharedLimiter, 'SA Crew Bot');
 
-  return new Proxy(connection, {
+  const callWithLimit = (
+    label: string,
+    bucketName: 'rpc:shared' | 'tx:shared',
+    method: string,
+    target: Connection,
+    value: (...args: unknown[]) => Promise<unknown>,
+    args: unknown[],
+  ) => limiter.wait(label, bucketName, method).then(() => value.apply(target, args));
+
+  return new Proxy(primary, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (typeof value !== 'function') {
         return value;
       }
+      const fallbackValue = fallback ? Reflect.get(fallback, prop, fallback) : null;
 
       return async (...args: unknown[]) => {
         const method = String(prop);
         const label = `Connection.${String(prop)}()`;
         const bucketName = prop === 'sendRawTransaction' ? 'tx:shared' : 'rpc:shared';
-        await limiter.wait(label, bucketName, method);
-        return value.apply(target, args);
+
+        // Provider-aware dispatch: ask the shared limiter which provider to
+        // use, dispatch to that Connection, and on 429 report back so the
+        // failed provider goes into cooldown.
+        const sharedLimiter = limiter.getSharedLimiter();
+        let pickedProvider: 'main' | 'fallback' = 'main';
+        if (sharedLimiter) {
+          try {
+            const pick = await limiter.waitForProvider(label, bucketName, method);
+            if (pick) pickedProvider = pick.provider;
+          } catch (waitError) {
+            logger.warn(`Shared limiter wait failed for ${label}, defaulting to main.`, waitError);
+          }
+        }
+
+        const usePickedAsPrimary = pickedProvider === 'main';
+        const pickedTarget = usePickedAsPrimary ? target : (fallback ?? target);
+        const pickedValue = usePickedAsPrimary ? value : (typeof fallbackValue === 'function' ? fallbackValue : value);
+        const otherTarget = usePickedAsPrimary ? (fallback ?? target) : target;
+        const otherValue = usePickedAsPrimary
+          ? (typeof fallbackValue === 'function' ? fallbackValue : null)
+          : value;
+        const otherLabel = usePickedAsPrimary
+          ? `fallback Connection.${String(prop)}()`
+          : `main Connection.${String(prop)}()`;
+
+        try {
+          return await callWithLimit(label, bucketName, method, pickedTarget, pickedValue as (...args: unknown[]) => Promise<unknown>, args);
+        } catch (error) {
+          if (!otherTarget || otherTarget === pickedTarget || typeof otherValue !== 'function') {
+            if (sharedLimiter && isRpcRateLimitError(error)) {
+              await sharedLimiter.recordProviderOutcome(pickedProvider, 'rate_limited').catch(() => undefined);
+            }
+            throw error;
+          }
+          logger.warn(`Provider ${pickedProvider} failed for ${label}, trying other provider.`, error);
+          if (sharedLimiter && isRpcRateLimitError(error)) {
+            try {
+              await sharedLimiter.recordProviderOutcome(pickedProvider, 'rate_limited');
+            } catch (reportError) {
+              logger.warn(`Failed to record provider outcome for ${pickedProvider}.`, reportError);
+            }
+          }
+          return await callWithLimit(otherLabel, bucketName, method, otherTarget, otherValue as (...args: unknown[]) => Promise<unknown>, args);
+        }
       };
     }
   }) as Connection;
@@ -351,6 +452,7 @@ export class CrewBidBot {
 
     this.connection = createLimitedConnection(
       config.rpcUrl,
+      config.rpcUrlFallback,
       this.logger,
       () => Boolean(this.config.useRpcLimiter)
     );
