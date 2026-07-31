@@ -8,11 +8,11 @@ async function pathExists(target, fsImpl = fs) {
   try { await fsImpl.access(target); return true; } catch { return false; }
 }
 
-async function validateStagedRelease({ currentRoot, stagedRoot, fsImpl = fs }) {
+async function validateStagedRelease({ currentRoot, stagedRoot, dependenciesInstalled = false, fsImpl = fs }) {
   const currentLock = await fsImpl.readFile(path.join(currentRoot, 'package-lock.json'), 'utf8').catch(() => null);
   const stagedLock = await fsImpl.readFile(path.join(stagedRoot, 'package-lock.json'), 'utf8').catch(() => null);
-  if (dependencyInstallRequired(currentLock, stagedLock)) {
-    throw new Error('This is a dependency-changing release. Fast in-app update was cancelled; the current installation was not changed.');
+  if (dependencyInstallRequired(currentLock, stagedLock) && !dependenciesInstalled) {
+    throw new Error('The release changes dependencies, but staged dependencies were not installed. The current installation was not changed.');
   }
 
   const requiredFiles = [
@@ -43,13 +43,19 @@ async function performAtomicSwap({ appRoot, stagedRoot, rollbackRoot, fsImpl = f
   try {
     await fsImpl.rename(appRoot, rollbackRoot);
     appMoved = true;
-    await moveIfPresent(path.join(rollbackRoot, 'node_modules'), path.join(stagedRoot, 'node_modules'), fsImpl);
+    if (!await pathExists(path.join(stagedRoot, 'node_modules'), fsImpl)) {
+      await moveIfPresent(path.join(rollbackRoot, 'node_modules'), path.join(stagedRoot, 'node_modules'), fsImpl);
+    }
     await moveIfPresent(path.join(rollbackRoot, 'analysis'), path.join(stagedRoot, 'analysis'), fsImpl);
     await fsImpl.rename(stagedRoot, appRoot);
   } catch (error) {
     if (appMoved && !await pathExists(appRoot, fsImpl)) {
-      await moveIfPresent(path.join(stagedRoot, 'node_modules'), path.join(rollbackRoot, 'node_modules'), fsImpl).catch(() => undefined);
-      await moveIfPresent(path.join(stagedRoot, 'analysis'), path.join(rollbackRoot, 'analysis'), fsImpl).catch(() => undefined);
+      if (!await pathExists(path.join(rollbackRoot, 'node_modules'), fsImpl)) {
+        await moveIfPresent(path.join(stagedRoot, 'node_modules'), path.join(rollbackRoot, 'node_modules'), fsImpl).catch(() => undefined);
+      }
+      if (!await pathExists(path.join(rollbackRoot, 'analysis'), fsImpl)) {
+        await moveIfPresent(path.join(stagedRoot, 'analysis'), path.join(rollbackRoot, 'analysis'), fsImpl).catch(() => undefined);
+      }
       await fsImpl.rename(rollbackRoot, appRoot).catch(() => undefined);
     }
     throw error;

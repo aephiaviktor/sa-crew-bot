@@ -333,7 +333,7 @@ async function downloadUpdate() {
   const currentVersion = packageJson.version || 'unknown';
   if (compareVersions(latest.version, currentVersion) <= 0) return false;
 
-  const deadlineEpochMs = Date.now() + UPDATE_TOTAL_BUDGET_MS;
+  let deadlineEpochMs = Date.now() + UPDATE_TOTAL_BUDGET_MS;
   const remaining = () => deadlineEpochMs - Date.now() - UPDATE_RESTART_RESERVE_MS;
   const requireRemainingTime = () => {
     const milliseconds = remaining();
@@ -360,14 +360,20 @@ async function downloadUpdate() {
     const extractedRoot = path.join(workDir, extracted.name);
     const currentLockText = await fs.readFile(path.join(APP_ROOT, 'package-lock.json'), 'utf8').catch(() => null);
     const nextLockText = await fs.readFile(path.join(extractedRoot, 'package-lock.json'), 'utf8').catch(() => null);
-    if (dependencyInstallRequired(currentLockText, nextLockText)) {
-      throw new Error('Dependency-changing releases are blocked from the fast updater. The current installation was not changed.');
+    const installDependencies = dependencyInstallRequired(currentLockText, nextLockText);
+    if (installDependencies) {
+      emitUpdateProgress('dependencies', 'Installing updated dependencies safely...');
+      await runProjectCommand(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['ci', '--no-audit', '--no-fund'], {
+        cwd: extractedRoot,
+        timeoutMs: 300_000,
+      });
+      deadlineEpochMs = Date.now() + UPDATE_TOTAL_BUDGET_MS;
     }
 
     await fs.rename(extractedRoot, stagedRoot);
     // Releases commit their compiled dist/ output. Validate that output instead of
     // rebuilding on the target machine, where compilation can exhaust the update budget.
-    await validateStagedRelease({ currentRoot: APP_ROOT, stagedRoot });
+    await validateStagedRelease({ currentRoot: APP_ROOT, stagedRoot, dependenciesInstalled: installDependencies });
     requireRemainingTime();
     return { stagedRoot, rollbackRoot, deadlineEpochMs };
   } catch (error) {
