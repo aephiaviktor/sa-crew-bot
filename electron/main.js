@@ -29,6 +29,7 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
 
 const { resolvePaths } = require('rpc_limiter');
 const { readState: readRpcLimiterState, writeStateSync: writeRpcLimiterStateSync, bumpRevision: bumpRpcLimiterRevision } = require('rpc_limiter/dist/state');
+const { applyRpcLimiterSettings, resolveLimiterConnectionUrls } = require('./lib/rpc-limiter-settings-policy');
 const { CrewBidBot } = require('../dist/crew_bid_bot');
 
 const DEFAULT_SETTINGS = {
@@ -530,30 +531,6 @@ function getRpcLimiterStatus() {
   };
 }
 
-function parseRpcUrlForLimiter(rawValue) {
-  const raw = String(rawValue || '').trim();
-  if (!raw) {
-    throw new Error('RPC URL is empty.');
-  }
-
-  const url = new URL(raw);
-  const apiKey = url.searchParams.get('api-key') || '';
-  url.searchParams.delete('api-key');
-  const remainingQuery = url.searchParams.toString();
-  const pathname = url.pathname === '/' ? '' : url.pathname;
-  const rpcBaseUrl = `${url.origin}${pathname}${remainingQuery ? `?${remainingQuery}` : ''}`;
-
-  return { rpcBaseUrl, apiKey };
-}
-
-function parsePositiveRate(value, fieldName) {
-  const parsed = Number.parseFloat(String(value ?? '').trim());
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`${fieldName} must be a positive number.`);
-  }
-  return parsed;
-}
-
 async function withRpcLimiterLock(fn) {
   const paths = getRpcLimiterPaths();
   fsSync.mkdirSync(path.dirname(paths.lockfile), { recursive: true });
@@ -574,44 +551,22 @@ async function withRpcLimiterLock(fn) {
 }
 
 async function sendSettingsToRpcLimiter(config) {
-  const { rpcBaseUrl, apiKey } = parseRpcUrlForLimiter(config.RPC_URL);
-  // The Main vs Fallback checkbox: unchecked (default) writes to 'main';
-  // checked writes to 'fallback'. The user assigns the URL they just
-  // pasted to one of the two provider slots.
-  const role = parseBooleanSetting(config.RPC_LIMITER_PROVIDER_ROLE) ? 'fallback' : 'main';
-  const rpcRequestsPerSecond = parsePositiveRate(config.RPC_REQUESTS_PER_SECOND, 'Requests / sec');
-  const txPerSecond = parsePositiveRate(config.RPC_TX_SEND_RATE_LIMIT_PER_SECOND, 'sendTransaction / sec');
-  const rpcIntervalMs = Math.max(1, Math.round(1000 / rpcRequestsPerSecond));
-  const txIntervalMs = Math.max(1, Math.round(1000 / txPerSecond));
-
+  let operation;
   await withRpcLimiterLock((paths) => {
     const state = readRpcLimiterState(paths.stateFile, Date.now());
-    state.enabled = true;
-    state.providers = state.providers || { main: {}, fallback: {} };
-    state.providers[role] = {
-      ...(state.providers[role] || {}),
-      rpcBaseUrl,
-      apiKey,
-      // Reset health metrics on re-configuration.
-      failures: 0,
-      cooldownUntilMs: null
-    };
-    state.buckets = state.buckets || {};
-    state.buckets['rpc:shared'] = {
-      ...(state.buckets['rpc:shared'] || { nextSlotMs: 0 }),
-      intervalMs: rpcIntervalMs
-    };
-    state.buckets['tx:shared'] = {
-      ...(state.buckets['tx:shared'] || { nextSlotMs: 0 }),
-      intervalMs: txIntervalMs
-    };
+    operation = applyRpcLimiterSettings(state, {
+      providerRole: config.providerRole,
+      rpcUrl: config.RPC_URL,
+      rpcRequestsPerSecond: config.RPC_REQUESTS_PER_SECOND,
+      txRequestsPerSecond: config.RPC_TX_SEND_RATE_LIMIT_PER_SECOND,
+    });
     state.updatedBy = RPC_LIMITER_UPDATED_BY;
     state.updatedAt = new Date().toISOString();
     bumpRpcLimiterRevision(state);
     writeRpcLimiterStateSync(paths.stateFile, state);
   });
 
-  return getRpcLimiterStatus();
+  return { ...getRpcLimiterStatus(), operation };
 }
 
 function settingsPath() {
@@ -738,16 +693,9 @@ async function getEffectiveBotSettings() {
 
   if (useRpcLimiter) {
     const rpcLimiter = getRpcLimiterStatus();
-    const mainUrl = rpcLimiter.providers?.main?.url;
-    const fallbackUrl = rpcLimiter.providers?.fallback?.url;
-    if (!mainUrl && !fallbackUrl) {
-      throw new Error('Use RPC Limiter is enabled, but no RPC Limiter URLs are configured. Send settings to RPC Limiter first.');
-    }
-    // Main becomes the bot's primary URL, fallback becomes the per-call
-    // failover target. If only one slot is configured, the other stays unset
-    // and the bot falls back to its own (non-limiter) behaviour.
-    if (mainUrl) botSettings.RPC_URL = mainUrl;
-    if (fallbackUrl) botSettings.RPC_URL_FALLBACK = fallbackUrl;
+    const limiterUrls = resolveLimiterConnectionUrls(rpcLimiter.providers);
+    botSettings.RPC_URL = limiterUrls.rpcUrl;
+    botSettings.RPC_URL_FALLBACK = limiterUrls.rpcUrlFallback;
   }
 
   return botSettings;
@@ -1013,9 +961,6 @@ handleTrustedIpc('rpc-limiter:get-status', async () => {
 
 handleTrustedIpc('rpc-limiter:send-settings', async (payload) => {
   const config = validateRpcLimiterPayload(payload);
-  if (!String(config.RPC_URL || '').trim()) {
-    config.RPC_URL = (await loadSettings(true)).RPC_URL;
-  }
   return await sendSettingsToRpcLimiter(config);
 });
 

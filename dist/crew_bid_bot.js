@@ -166,7 +166,8 @@ function createLimitedConnection(mainUrl, fallbackUrl, logger, useSharedLimiter)
                             pickedProvider = pick.provider;
                     }
                     catch (waitError) {
-                        logger.warn(`Shared limiter wait failed for ${label}, defaulting to main.`, waitError);
+                        logger.error(`Shared limiter wait failed for ${label}.`, waitError);
+                        throw waitError;
                     }
                 }
                 const usePickedAsPrimary = pickedProvider === 'main';

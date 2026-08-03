@@ -904,10 +904,13 @@ sendRpcLimiterBtn.addEventListener('click', async () => {
     const status = await window.botApi.sendSettingsToRpcLimiter({
       RPC_URL: config.RPC_URL,
       RPC_REQUESTS_PER_SECOND: config.RPC_REQUESTS_PER_SECOND,
-      RPC_TX_SEND_RATE_LIMIT_PER_SECOND: config.RPC_TX_SEND_RATE_LIMIT_PER_SECOND
+      RPC_TX_SEND_RATE_LIMIT_PER_SECOND: config.RPC_TX_SEND_RATE_LIMIT_PER_SECOND,
+      providerRole: form.elements.namedItem('RPC_LIMITER_PROVIDER_ROLE')?.checked ? 'fallback' : 'main'
     });
     renderRpcLimiterStatus(status);
-    appendLog(`[${new Date().toISOString()}] [INFO] Sent settings to RPC Limiter`);
+    const roleLabel = status.operation?.role === 'fallback' ? 'Fallback' : 'Main';
+    const actionLabel = status.operation?.action === 'cleared' ? 'cleared' : 'updated';
+    appendLog(`[${new Date().toISOString()}] [INFO] RPC Limiter ${roleLabel} slot ${actionLabel}`);
   } catch (err) {
     appendLog(`[${new Date().toISOString()}] [ERROR] ${err?.message || String(err)}`);
   } finally {

@@ -8,7 +8,7 @@ const SETTINGS_FIELDS = new Set([
   'MIN_RELEVANT_BID_QUANTITY', 'LIMIT_ORDERS',
 ]);
 const RPC_LIMITER_FIELDS = new Set([
-  'RPC_URL', 'RPC_REQUESTS_PER_SECOND', 'RPC_TX_SEND_RATE_LIMIT_PER_SECOND',
+  'RPC_URL', 'RPC_REQUESTS_PER_SECOND', 'RPC_TX_SEND_RATE_LIMIT_PER_SECOND', 'providerRole',
 ]);
 const LIMIT_ORDER_FIELDS = new Set([
   'id', 'side', 'bidState', 'bidId', 'quantity', 'refillBelowQuantity', 'minBidSol', 'maxBidSol', 'traitsLabel',
