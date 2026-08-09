@@ -550,15 +550,15 @@ async function withRpcLimiterLock(fn) {
   }
 }
 
-async function sendSettingsToRpcLimiter(config) {
+async function sendSettingsToRpcLimiter(payload) {
   let operation;
   await withRpcLimiterLock((paths) => {
     const state = readRpcLimiterState(paths.stateFile, Date.now());
     operation = applyRpcLimiterSettings(state, {
-      providerRole: config.providerRole,
-      rpcUrl: config.RPC_URL,
-      rpcRequestsPerSecond: config.RPC_REQUESTS_PER_SECOND,
-      txRequestsPerSecond: config.RPC_TX_SEND_RATE_LIMIT_PER_SECOND,
+      providerRole: payload.providerRole,
+      rpcUrl: payload.rpcUrl,
+      rpcRequestsPerSecond: payload.rpcRequestsPerSecond,
+      txRequestsPerSecond: payload.txRequestsPerSecond,
     });
     state.updatedBy = RPC_LIMITER_UPDATED_BY;
     state.updatedAt = new Date().toISOString();

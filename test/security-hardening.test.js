@@ -50,9 +50,9 @@ test('settings IPC rejects unknown keys and non-primitive values', () => {
 });
 
 test('RPC limiter and cancel-bid IPC payloads are bounded', () => {
-  assert.deepEqual(validateRpcLimiterPayload({ RPC_URL: 'https://rpc.invalid', RPC_REQUESTS_PER_SECOND: '10', providerRole: 'fallback' }), {
-    RPC_URL: 'https://rpc.invalid',
-    RPC_REQUESTS_PER_SECOND: '10',
+  assert.deepEqual(validateRpcLimiterPayload({ rpcUrl: 'https://rpc.invalid', rpcRequestsPerSecond: '10', providerRole: 'fallback' }), {
+    rpcUrl: 'https://rpc.invalid',
+    rpcRequestsPerSecond: '10',
     providerRole: 'fallback',
   });
   assert.throws(() => validateRpcLimiterPayload({ HOT_WALLET_SECRET: 'nope' }), /Unknown RPC limiter field/i);

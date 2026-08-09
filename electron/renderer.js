@@ -902,9 +902,9 @@ sendRpcLimiterBtn.addEventListener('click', async () => {
   try {
     const config = readFormConfig();
     const status = await window.botApi.sendSettingsToRpcLimiter({
-      RPC_URL: config.RPC_URL,
-      RPC_REQUESTS_PER_SECOND: config.RPC_REQUESTS_PER_SECOND,
-      RPC_TX_SEND_RATE_LIMIT_PER_SECOND: config.RPC_TX_SEND_RATE_LIMIT_PER_SECOND,
+      rpcUrl: config.RPC_URL,
+      rpcRequestsPerSecond: config.RPC_REQUESTS_PER_SECOND,
+      txRequestsPerSecond: config.RPC_TX_SEND_RATE_LIMIT_PER_SECOND,
       providerRole: form.elements.namedItem('RPC_LIMITER_PROVIDER_ROLE')?.checked ? 'fallback' : 'main'
     });
     renderRpcLimiterStatus(status);
