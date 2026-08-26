@@ -1,12 +1,15 @@
 {
   "name": "sa-crew-bot",
-  "version": "0.2.27",
+  "version": "0.2.28",
   "private": true,
   "main": "electron/main.js",
   "type": "commonjs",
   "scripts": {
     "build": "tsc",
-    "start": "npm run build && electron ."
+    "start": "npm run build && electron .",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test",
+    "dist:win": "npm run build && electron-builder --win nsis --publish never"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
@@ -14,12 +17,15 @@
     "@tensor-oss/tcomp-sdk": "^6.0.0",
     "bn.js": "^5.2.1",
     "bs58": "^6.0.0",
-    "electron": "^42.1.0",
+    "electron-updater": "^6.8.9",
     "proper-lockfile": "^4.1.2",
-    "rpc_limiter": "git+https://github.com/aephiaviktor/rpc-limiter.git#main"
+    "rpc_limiter": "git+https://github.com/aephiaviktor/rpc-limiter.git#main",
+    "semver": "^7.8.5"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
+    "electron": "^42.10.1",
+    "electron-builder": "^26.15.3",
     "png-to-ico": "^3.0.1",
     "typescript": "^5.9.2"
   },
@@ -33,5 +39,50 @@
     "number-to-bn": {
       "bn.js": "^4.12.3"
     }
-  }
+  },
+  "build": {
+    "appId": "com.aephia.sa-crew-bot",
+    "productName": "SA Crew Bot",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "assets/**/*",
+      "package.json",
+      "!electron/atomic-update.js",
+      "!electron/update-dependencies.js",
+      "!electron/restart-helper.js",
+      "!electron/restart-status.ps1"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/sa_crew_bot_avatar.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "aephiaviktor",
+        "repo": "sa-crew-bot",
+        "releaseType": "draft"
+      }
+    ]
+  },
+  "description": "Packaged desktop automation for Star Atlas crew marketplace bidding.",
+  "author": "Aephia"
 }

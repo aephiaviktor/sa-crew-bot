@@ -1012,6 +1012,12 @@ updateConfirmBtn?.addEventListener('click', async () => {
   }
 });
 
+window.botApi.onUpdateProgress?.((progress) => {
+  if (!progress?.message) return;
+  updateMessageEl.textContent = progress.message;
+  appendLog('[' + new Date().toISOString() + '] [INFO] Update: ' + progress.message);
+});
+
 window.addEventListener('beforeunload', () => {
   stopStatusPolling();
 });

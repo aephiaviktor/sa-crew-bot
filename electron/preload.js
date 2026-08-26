@@ -13,6 +13,11 @@ contextBridge.exposeInMainWorld('botApi', {
   getAppVersion: () => ipcRenderer.invoke('app:get-version'),
   checkUpdate: () => ipcRenderer.invoke('app:check-update'),
   applyUpdate: () => ipcRenderer.invoke('app:apply-update'),
+  onUpdateProgress: (handler) => {
+    const wrapped = (_event, payload) => handler(payload);
+    ipcRenderer.on('update-progress', wrapped);
+    return () => ipcRenderer.removeListener('update-progress', wrapped);
+  },
   onLog: (handler) => {
     const wrapped = (_event, payload) => handler(payload);
     ipcRenderer.on('bot-log', wrapped);

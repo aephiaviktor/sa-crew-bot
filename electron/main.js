@@ -2,11 +2,10 @@ const { app, BrowserWindow, ipcMain, Menu, dialog, powerSaveBlocker, safeStorage
 const path = require('path');
 const fs = require('fs/promises');
 const fsSync = require('fs');
-const { spawn } = require('child_process');
 const lockfile = require('proper-lockfile');
 const packageJson = require('../package.json');
-const { dependencyInstallRequired } = require('./update-dependencies');
-const { validateStagedRelease } = require('./atomic-update');
+const { autoUpdater } = require('electron-updater');
+const { determineReleaseAction } = require('./release-update-policy');
 const stableIcon = require('./lib/stable-icon');
 const { atomicWriteFile } = require('./lib/atomic-write');
 const { createSecureSettingsStore } = require('./lib/secure-settings');
@@ -19,6 +18,7 @@ const {
 } = require('./lib/ipc-security');
 
 app.disableHardwareAcceleration();
+app.setPath('userData', path.join(app.getPath('appData'), 'sa-crew-bot'));
 
 // Disable Chromium background throttling. SA Crew Bid Bot is a 24/7
 // automation process and must remain responsive even when its window
@@ -57,7 +57,6 @@ const DEFAULT_SETTINGS = {
 let mainWindow = null;
 let botEntries = [];
 let botRunning = false;
-let relaunchScheduled = false;
 
 // Never allow two automation instances to operate on the same settings/wallet.
 // A second launch (manual, Startup, or scheduled task) focuses the existing app.
@@ -75,31 +74,14 @@ app.on('second-instance', () => {
 
 const AEPHIA_TOKEN_VALIDATE_URL = 'https://api.aephia.com/token/validate';
 const GITHUB_REPO = 'aephiaviktor/sa-crew-bot';
-const GITHUB_MAIN_PACKAGE_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/package.json`;
-const GITHUB_MAIN_ARCHIVE_URL = `https://github.com/${GITHUB_REPO}/archive/refs/heads/main.tar.gz`;
+const GITHUB_LATEST_RELEASE_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 const APP_DISPLAY_NAME = 'SA Crew Bot';
-const RESTART_TASK_NAME = 'SA Crew Bot';
 const APP_ROOT = path.join(__dirname, '..');
 const APP_USER_MODEL_ID = 'com.aephia.sa-crew-bot';
 const RPC_LIMITER_UPDATED_BY = 'SA Crew Bot';
-const UPDATE_TOTAL_BUDGET_MS = 30_000;
-const UPDATE_RESTART_RESERVE_MS = 4_000;
+const APP_VERSION = packageJson.version || 'unknown';
 const SECRET_SETTING_KEYS = ['AEPHIA_API_KEY', 'HOT_WALLET_SECRET', 'RPC_URL'];
 let secureSettingsStore = null;
-
-async function cleanupStaleUpdateDirectories() {
-  const parentDir = path.dirname(APP_ROOT);
-  const appName = path.basename(APP_ROOT);
-  const entries = await fs.readdir(parentDir, { withFileTypes: true }).catch(() => []);
-  const stalePrefixes = [
-    '.sa-crew-bot-update-',
-    '.sa-crew-bid-bot-rollback.stale-',
-    `${appName}.failed-`,
-  ];
-  await Promise.all(entries
-    .filter((entry) => entry.isDirectory() && stalePrefixes.some((prefix) => entry.name.startsWith(prefix)))
-    .map((entry) => fs.rm(path.join(parentDir, entry.name), { recursive: true, force: true }).catch(() => undefined)));
-}
 
 if (process.platform === 'win32') {
   app.setAppUserModelId(APP_USER_MODEL_ID);
@@ -137,7 +119,7 @@ function serializeCrashValue(value) {
 }
 
 function logCrashEvent(type, details = {}) {
-  const logPath = path.join(APP_ROOT, 'analysis', 'crash-events.jsonl');
+  const logPath = path.join(app.getPath('userData'), 'analysis', 'crash-events.jsonl');
   const event = {
     timestamp: new Date().toISOString(),
     app: APP_DISPLAY_NAME,
@@ -206,182 +188,70 @@ function installCrashEventLogging() {
   });
 }
 
-function normalizeVersion(value) {
-  return String(value || '').trim().replace(/^v/i, '');
-}
-
-function compareVersions(left, right) {
-  const leftParts = normalizeVersion(left).split('.').map((part) => Number.parseInt(part, 10) || 0);
-  const rightParts = normalizeVersion(right).split('.').map((part) => Number.parseInt(part, 10) || 0);
-  const length = Math.max(leftParts.length, rightParts.length);
-  for (let index = 0; index < length; index += 1) {
-    if ((leftParts[index] || 0) > (rightParts[index] || 0)) return 1;
-    if ((leftParts[index] || 0) < (rightParts[index] || 0)) return -1;
-  }
-  return 0;
-}
-
-async function fetchGithubJson(url) {
-  const response = await fetch(url, {
-    headers: {
-      Accept: 'application/vnd.github+json',
-      'User-Agent': 'sa-crew-bot-updater'
-    }
+async function fetchLatestOfficialRelease() {
+  const response = await fetch(GITHUB_LATEST_RELEASE_API_URL, {
+    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'sa-crew-bot-updater' },
   });
-  if (!response.ok) throw new Error(`GitHub request failed: HTTP ${response.status}`);
-  return await response.json();
-}
-
-async function getLatestGithubVersion() {
-  const remotePackage = await fetchGithubJson(GITHUB_MAIN_PACKAGE_URL);
-  const version = normalizeVersion(remotePackage?.version);
-  if (!version) throw new Error('No package version found on GitHub main.');
-  return { version, branch: 'main', tarballUrl: GITHUB_MAIN_ARCHIVE_URL };
+  if (!response.ok) throw new Error(`GitHub Releases request failed: HTTP ${response.status}`);
+  const release = await response.json();
+  const version = String(release?.tag_name || '').trim().replace(/^v/i, '');
+  if (!version) throw new Error('The latest published GitHub Release has no version tag.');
+  return { version, url: release.html_url || `https://github.com/${GITHUB_REPO}/releases/latest` };
 }
 
 async function getUpdateState() {
-  const currentVersion = packageJson.version || 'unknown';
-  const latest = await getLatestGithubVersion();
-  const versionUpdateAvailable = compareVersions(latest.version, currentVersion) > 0;
+  const latest = await fetchLatestOfficialRelease();
+  const decision = determineReleaseAction(APP_VERSION, latest.version);
   return {
-    currentVersion,
-    runtimeVersion: currentVersion,
-    localSourceVersion: currentVersion,
-    remoteVersion: latest.version,
-    updateAvailable: versionUpdateAvailable,
-    versionUpdateAvailable,
+    currentVersion: decision.currentVersion,
+    runtimeVersion: decision.currentVersion,
+    localSourceVersion: decision.currentVersion,
+    remoteVersion: decision.latestVersion,
+    latestVersion: decision.latestVersion,
+    updateAvailable: decision.action !== 'none',
+    versionUpdateAvailable: decision.action !== 'none',
     commitUpdateAvailable: false,
-    hasLocalChanges: false
+    restoreOfficial: decision.action === 'restore',
+    hasLocalChanges: false,
+    releaseUrl: latest.url,
   };
 }
 
-function runProjectCommand(command, args, options = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd || APP_ROOT,
-      shell: options.shell ?? process.platform === 'win32',
-      windowsHide: true,
-      env: options.env || process.env,
-    });
-    let output = '';
-    child.stdout.on('data', (chunk) => { output += chunk.toString(); });
-    child.stderr.on('data', (chunk) => { output += chunk.toString(); });
-    child.on('error', reject);
-    let timedOut = false;
-    const timeout = options.timeoutMs > 0 ? setTimeout(() => {
-      timedOut = true;
-      child.kill();
-    }, options.timeoutMs) : null;
-    child.on('close', (code) => {
-      if (timeout) clearTimeout(timeout);
-      if (code === 0) resolve(output);
-      else if (timedOut) reject(new Error(`${command} exceeded the update time budget.`));
-      else reject(new Error(`${command} ${args.join(' ')} failed with exit code ${code}: ${output.slice(-2000)}`));
-    });
-  });
+function emitUpdateProgress(stage, message) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-progress', { stage, message });
 }
 
-async function downloadFile(url, targetPath, timeoutMs) {
-  const response = await fetch(url, {
-    headers: { 'User-Agent': 'sa-crew-bot-updater' },
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`);
-  await fs.writeFile(targetPath, Buffer.from(await response.arrayBuffer()));
-}
+async function downloadUpdateAndRestart() {
+  if (!app.isPackaged) throw new Error('Release updates are available only in the packaged application.');
+  const update = await getUpdateState();
+  if (!update.updateAvailable) return { updated: false, ...update };
 
-function scheduleAppRelaunch(expectedVersion, updatePlan) {
-  if (relaunchScheduled) return Promise.resolve();
-  relaunchScheduled = true;
+  if (botRunning) {
+    emitUpdateProgress('stopping-bot', 'Stopping the bot safely...');
+    await stopBot();
+  }
 
-  const restartHelperExecutable = process.platform === 'win32' ? 'node.exe' : process.execPath;
-  const restartHelper = spawn(restartHelperExecutable, [
-    path.join(__dirname, 'restart-helper.js'),
-    String(process.pid),
-    RESTART_TASK_NAME,
-    APP_DISPLAY_NAME,
-    expectedVersion,
-    APP_ROOT,
-    path.join(__dirname, 'restart-status.ps1'),
-    path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'SACrewBot', 'logs', 'supervisor.log'),
-    updatePlan.stagedRoot,
-    updatePlan.rollbackRoot,
-    String(updatePlan.deadlineEpochMs),
-  ], {
-    cwd: path.dirname(APP_ROOT),
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
-    env: process.env,
-  });
-  return new Promise((resolve, reject) => {
-    restartHelper.once('error', (error) => {
-      relaunchScheduled = false;
-      reject(error);
-    });
-    restartHelper.once('spawn', () => {
-      restartHelper.unref();
-      // A clean exit lets the supervisor task become Ready. The detached helper
-      // swaps the staged tree, starts the canonical task, and verifies startup.
-      setTimeout(() => app.exit(0), 1200);
-      resolve();
-    });
-  });
-}
-
-async function downloadUpdate() {
-  const latest = await getLatestGithubVersion();
-  const currentVersion = packageJson.version || 'unknown';
-  if (compareVersions(latest.version, currentVersion) <= 0) return false;
-
-  let deadlineEpochMs = Date.now() + UPDATE_TOTAL_BUDGET_MS;
-  const remaining = () => deadlineEpochMs - Date.now() - UPDATE_RESTART_RESERVE_MS;
-  const requireRemainingTime = () => {
-    const milliseconds = remaining();
-    if (milliseconds <= 0) {
-      throw new Error('Update staging exceeded the 30-second time budget. The current installation was not changed.');
-    }
-    return milliseconds;
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.allowPrerelease = false;
+  autoUpdater.allowDowngrade = update.restoreOfficial;
+  const progressHandler = (progress) => {
+    const percent = Number.isFinite(progress?.percent) ? ` (${Math.floor(progress.percent)}%)` : '';
+    emitUpdateProgress('downloading', `Downloading official SA Crew Bot v${update.latestVersion}${percent}...`);
   };
-  const parentDir = path.dirname(APP_ROOT);
-  const workDir = await fs.mkdtemp(path.join(parentDir, '.sa-crew-bot-update-'));
-  const stagedRoot = `${workDir}-staged`;
-  const rollbackRoot = path.join(parentDir, '.sa-crew-bid-bot-rollback');
-  const archivePath = path.join(workDir, 'main.tar.gz');
+  autoUpdater.on('download-progress', progressHandler);
   try {
-    await downloadFile(latest.tarballUrl, archivePath, requireRemainingTime());
-    await runProjectCommand('tar', ['-xzf', archivePath, '-C', workDir], {
-      cwd: workDir,
-      timeoutMs: requireRemainingTime(),
-    });
-    const entries = await fs.readdir(workDir, { withFileTypes: true });
-    const extracted = entries.find((entry) => entry.isDirectory() && entry.name.startsWith('sa-crew-bot-'));
-    if (!extracted) throw new Error('Downloaded update archive did not contain the expected project folder.');
-
-    const extractedRoot = path.join(workDir, extracted.name);
-    const currentLockText = await fs.readFile(path.join(APP_ROOT, 'package-lock.json'), 'utf8').catch(() => null);
-    const nextLockText = await fs.readFile(path.join(extractedRoot, 'package-lock.json'), 'utf8').catch(() => null);
-    const installDependencies = dependencyInstallRequired(currentLockText, nextLockText);
-    if (installDependencies) {
-      emitUpdateProgress('dependencies', 'Installing updated dependencies safely...');
-      await runProjectCommand(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['ci', '--no-audit', '--no-fund'], {
-        cwd: extractedRoot,
-        timeoutMs: 300_000,
-      });
-      deadlineEpochMs = Date.now() + UPDATE_TOTAL_BUDGET_MS;
+    emitUpdateProgress('checking-release', `Preparing official SA Crew Bot v${update.latestVersion}...`);
+    const result = await autoUpdater.checkForUpdates();
+    if (!result?.updateInfo || result.updateInfo.version !== update.latestVersion) {
+      throw new Error(`Official Release v${update.latestVersion} could not be selected by the packaged updater.`);
     }
-
-    await fs.rename(extractedRoot, stagedRoot);
-    // Releases commit their compiled dist/ output. Validate that output instead of
-    // rebuilding on the target machine, where compilation can exhaust the update budget.
-    await validateStagedRelease({ currentRoot: APP_ROOT, stagedRoot, dependenciesInstalled: installDependencies });
-    requireRemainingTime();
-    return { stagedRoot, rollbackRoot, deadlineEpochMs };
-  } catch (error) {
-    await fs.rm(stagedRoot, { recursive: true, force: true }).catch(() => undefined);
-    throw error;
+    await autoUpdater.downloadUpdate();
+    emitUpdateProgress('restarting', `Official SA Crew Bot v${update.latestVersion} downloaded. Restarting...`);
+    setTimeout(() => autoUpdater.quitAndInstall(true, true), 500);
+    return { updated: true, ...update };
   } finally {
-    await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
+    autoUpdater.off('download-progress', progressHandler);
   }
 }
 
@@ -1061,34 +931,11 @@ handleTrustedIpc('app:check-update', async () => {
 });
 
 handleTrustedIpc('app:apply-update', async () => {
-  let stoppedBotForUpdate = false;
-  let updatePlan = null;
   try {
-    const before = await getUpdateState();
-    if (!before.updateAvailable) return { ok: true, status: 'up_to_date', ...before };
-    updatePlan = await downloadUpdate();
-    if (botRunning) {
-      await stopBot();
-      stoppedBotForUpdate = true;
-    }
-    await scheduleAppRelaunch(before.remoteVersion, updatePlan);
-    return {
-      ok: true,
-      status: 'updated',
-      stoppedBotForUpdate,
-      relaunching: true,
-      currentVersion: before.remoteVersion,
-      remoteVersion: before.remoteVersion,
-      updateAvailable: false,
-      versionUpdateAvailable: false,
-      commitUpdateAvailable: false,
-      hasLocalChanges: false
-    };
+    const result = await downloadUpdateAndRestart();
+    return { ok: true, status: result.updated ? 'updated' : 'up_to_date', relaunching: result.updated, ...result };
   } catch (err) {
-    if (updatePlan?.stagedRoot && !relaunchScheduled) {
-      await fs.rm(updatePlan.stagedRoot, { recursive: true, force: true }).catch(() => undefined);
-    }
-    if (stoppedBotForUpdate) {
+    if (!botRunning) {
       try { await startBotFromSettings(); } catch (restartErr) { logger.error('Bot restart after failed update failed:', restartErr); }
     }
     return { ok: false, status: 'error', message: err?.message || String(err) };
@@ -1100,7 +947,6 @@ app.whenReady().then(async () => {
   console.log(`[SA-Crew] prevent-app-suspension blocker=${powerSaveBlockerId} active=${powerSaveBlocker.isStarted(powerSaveBlockerId)}`)
 
   installApplicationMenu();
-  void cleanupStaleUpdateDirectories();
   createWindow();
 
   try {

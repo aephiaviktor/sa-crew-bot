@@ -3,13 +3,12 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-test('fast updater installs committed build output without compiling on the target machine', async () => {
+test('packaged updater installs official release artifacts without compiling on the target machine', async () => {
   const main = await fs.readFile(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
-  assert.match(main, /UPDATE_TOTAL_BUDGET_MS = 30_000/);
-  assert.match(main, /UPDATE_RESTART_RESERVE_MS = 4_000/);
+  assert.match(main, /autoUpdater\.downloadUpdate\(\)/);
+  assert.match(main, /autoUpdater\.quitAndInstall\(true, true\)/);
   assert.doesNotMatch(main, /typescript['"], ['"]bin['"], ['"]tsc/);
-  assert.doesNotMatch(main, /ELECTRON_RUN_AS_NODE/);
-  assert.doesNotMatch(main, /stagedNodeModules/);
+  assert.doesNotMatch(main, /npm\.cmd|main\.tar\.gz|stagedNodeModules/);
 });
 
 test('release archive carries incremental build output for legacy-updater bootstrap', async () => {
